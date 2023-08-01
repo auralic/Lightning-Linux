@@ -1,0 +1,1858 @@
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * Copyright (C) 2015 Heiko Schocher <hs@denx.de>
+ *
+ * from:
+ * drivers/gpu/drm/panel/panel-ld9040.c
+ * ld9040 AMOLED LCD drm_panel driver.
+ *
+ * Copyright (c) 2014 Samsung Electronics Co., Ltd
+ * Derived from drivers/video/backlight/ld9040.c
+ *
+ * Andrzej Hajda <a.hajda@samsung.com>
+*/
+
+#include <linux/delay.h>
+#include <linux/gpio/consumer.h>
+#include <linux/module.h>
+#include <linux/of_platform.h>
+#include <linux/platform_device.h>
+#include <linux/regulator/consumer.h>
+#include <linux/media-bus-format.h>
+#include <linux/spi/spi.h>
+#include <linux/i2c.h>
+#include <video/mipi_display.h>
+#include <video/of_videomode.h>
+#include <video/videomode.h>
+#include <video/display_timing.h>
+#include <video/of_display_timing.h>
+
+#include <drm/drm_device.h>
+#include <drm/drm_modes.h>
+#include <drm/drm_panel.h>
+#include <linux/regmap.h>
+
+
+#define REG_PAGE_CONTROL			0xff
+#define REG_CHIPID0				0x8100
+#define REG_CHIPID0_VALUE			0x18
+#define REG_CHIPID1				0x8101
+#define REG_CHIPID1_VALUE			0x01
+#define REG_CHIPID2				0x8102
+#define REG_CHIPID2_VALUE			0xe3
+
+typedef enum LVDS_FORMAT_ENUM{
+    VESA_FORMAT = 0,
+    JEDIA_FORMAT
+};
+#define LVDS_FORMAT VESA_FORMAT
+
+typedef enum LVDS_MODE_ENUM{
+    DE_MODE = 0,
+    SYNC_MODE
+};
+#define LVDS_MODE SYNC_MODE
+
+#define INPUT_PORTA
+//#define INPUT_PORTB
+#define INPUT_PORT_NUM 1
+static bool lt9211_enabled = false;
+static struct task_struct *lt9211_task = NULL;
+
+/******************* Output Config ********************/
+typedef enum LT9211_OUTPUTMODE_ENUM
+{
+    OUTPUT_RGB888=0,
+    OUTPUT_BT656_8BIT=1,
+    OUTPUT_BT1120_16BIT=2,
+    OUTPUT_LVDS_2_PORT=3,
+    OUTPUT_LVDS_1_PORT=4,
+   
+};
+#define LT9211_OutPutModde  OUTPUT_RGB888 //OUTPUT_BT1120_16BIT
+typedef struct video_timing{
+u16 hfp;
+u16 hs;
+u16 hbp;
+u16 hact;
+u16 htotal;
+u16 vfp;
+u16 vs;
+u16 vbp;
+u16 vact;
+u16 vtotal;
+u32 pclk_khz;
+};
+
+typedef struct Timing{
+u16 hfp;
+u16 hs;
+u16 hbp;
+u16 hact;
+u16 htotal;
+u16 vfp;
+u16 vs;
+u16 vbp;
+u16 vact;
+u16 vtotal;
+u32 pclk_khz;
+};
+typedef enum VideoFormat
+{
+	  video_1280x720_60Hz_vic=1,
+	  video_1366x768_60Hz_vic,
+	  video_1280x1024_60Hz_vic,
+    video_1920x1080_60Hz_vic,
+	  video_1920x1200_60Hz_vic,
+    video_none
+};
+struct video_timing *pVideo_Format;
+//					                        //hfp, hs, hbp,hact,htotal,vfp, vs, vbp, vact,vtotal,
+//struct video_timing video_480x800_61Hz     ={ 30, 10,  30, 480,   550, 8,  2,  15, 800,   825,  27000};
+struct video_timing video_480x800_60Hz     ={ 164, 10,  89, 480,   743, 10,  10,  23, 800,   843,  27000};
+struct video_timing video_640x480_60Hz     ={ 8, 96,  40, 640,   800, 33,  2,  10, 480,   525,  25000};
+struct video_timing video_720x480_60Hz     ={16, 62,  60, 720,   858,  9,  6,  30, 480,   525,  27000};
+struct video_timing video_1280x720_60Hz    ={110,40, 220,1280,  1650,  5,  5,  20, 720,   750,  74250};
+struct video_timing video_1280x720_30Hz    ={110,40, 220,1280,  1650,  5,  5,  20, 720,   750,  74250};
+struct video_timing video_1366x768_60Hz    ={26, 110,110,1366,  1592,  13, 6,  13, 768,   800,  81000};
+
+struct video_timing video_1920x1080_30Hz   ={88, 44, 148,1920,  2200,  4,  5,  36, 1080, 1125,  74250};
+struct video_timing video_1920x1080_60Hz   ={88, 44, 148,1920,  2200,  4,  5,  36, 1080, 1125, 148500};
+struct video_timing video_3840x1080_60Hz   ={176,88, 296,3840,  4400,  4,  5,  36, 1080, 1125, 297000};
+struct video_timing video_1920x1200_60Hz   ={48, 32,  80,1920,  2080,  3,  6,  26, 1200, 1235, 154000};
+struct video_timing video_3840x2160_30Hz   ={176,88, 296,3840,  4400,  8,  10, 72, 2160, 2250, 297000};
+struct video_timing video_3840x2160_60Hz   ={176,88, 296,3840,  4400,  8,  10, 72, 2160, 2250, 594000};
+
+    u16 hact, vact;
+    u16 hs, vs;
+    u16 hbp, vbp;
+    u16 htotal, vtotal;
+    u16 hfp, vfp;
+    u8 VideoFormat=0;
+    u32 lvds_clk_in = 0;
+typedef enum VIDEO_INPUTMODE_ENUM
+{
+    Input_RGB888,
+    Input_YCbCr444,
+    Input_YCbCr422_16BIT
+}
+_Video_Input_Mode;
+
+#define Video_Input_Mode  Input_RGB888
+
+struct ili9806g {
+	struct drm_panel panel;
+	struct device *dev;
+    struct i2c_client *client;
+	struct regmap			*regmap;
+	struct gpio_desc		*reset_gpio;
+	struct videomode vm;
+	u32 bus_format;
+    enum drm_panel_orientation orientation;
+	unsigned int width;
+	unsigned int height;
+};
+static const struct regmap_range lt9211_rw_ranges[] = {
+	regmap_reg_range(0xff, 0xff),
+	regmap_reg_range(0x8100, 0x816b),
+	regmap_reg_range(0x8200, 0x82aa),
+	regmap_reg_range(0x8500, 0x85ff),
+	regmap_reg_range(0x8600, 0x86a0),
+	regmap_reg_range(0x8700, 0x8746),
+	regmap_reg_range(0xd000, 0xd0a7),
+	regmap_reg_range(0xd400, 0xd42c),
+	regmap_reg_range(0xd800, 0xd838),
+	regmap_reg_range(0xd9c0, 0xd9d5),
+	regmap_reg_range(0xf986, 0xf987),
+};
+
+static const struct regmap_access_table lt9211_rw_table = {
+	.yes_ranges = lt9211_rw_ranges,
+	.n_yes_ranges = ARRAY_SIZE(lt9211_rw_ranges),
+};
+
+static const struct regmap_range_cfg lt9211_range = {
+	.name = "lt9211",
+	.range_min = 0x0000,
+	.range_max = 0xda00,
+	.selector_reg = REG_PAGE_CONTROL,
+	.selector_mask = 0xff,
+	.selector_shift = 0,
+	.window_start = 0,
+	.window_len = 0x100,
+};
+
+static const struct regmap_config lt9211_regmap_config = {
+	.reg_bits = 8,
+	.val_bits = 8,
+	.rd_table = &lt9211_rw_table,
+	.wr_table = &lt9211_rw_table,
+	.volatile_table	= &lt9211_rw_table,
+	.ranges = &lt9211_range,
+	.num_ranges = 1,
+	.cache_type = REGCACHE_RBTREE,
+	.max_register = 0xda00,
+};
+
+
+static inline struct ili9806g *panel_to_ili9806g(struct drm_panel *panel)
+{
+	return container_of(panel, struct ili9806g, panel);
+}
+#define CONFIG_AURALIC_LCD		1
+#if defined(CONFIG_AURALIC_LCD)
+/* proc filesystem */
+#include <linux/proc_fs.h>
+#include <linux/fs.h>
+#include <linux/uio.h>
+#include <asm/uaccess.h>
+#include <linux/list.h>
+#include <linux/gpio.h>
+#include <linux/delay.h>
+#include <linux/mm.h>
+#include <linux/timer.h>
+#include <linux/kthread.h>
+#include <linux/cdev.h>  
+#include <linux/device.h> 
+#define	IONUMER(x, y)	((x-1)*32 + y)
+
+#define LCD_PROC_NAME       "lcd"
+#define	lcd_reset_pin		IONUMER(5, 24)//
+#define	spi_clk_pin			IONUMER(5, 6)
+#define	spi_cs_pin			IONUMER(5, 9)
+#define	spi_mosi_pin		IONUMER(5, 7)
+#define	spi_miso_pin		IONUMER(5, 8)
+
+#define lcd_reset(x)	\
+do \
+{ \
+	gpio_set_value(lcd_reset_pin, x); \
+}while(0)
+
+#define spi_cs(x)	\
+do \
+{ \
+	gpio_set_value(spi_cs_pin, x); \
+}while(0)
+
+#define spi_clk(x)	\
+do \
+{ \
+	gpio_set_value(spi_clk_pin, x); \
+	udelay(10); \
+}while(0)
+
+#define spi_mosi(x)	\
+do \
+{ \
+	gpio_set_value(spi_mosi_pin, x); \
+	udelay(10); \
+}while(0)
+
+#define spi_miso(x)	\
+do \
+{ \
+	gpio_set_value(spi_miso_pin, x); \
+}while(0)
+	
+void spi_cmd(u8 cmd)
+{
+	u8 i;
+	
+	//spi_cs(0);
+	spi_clk(0);
+	spi_mosi(0); //cmd
+	spi_clk(1);
+	
+	for(i=0;i<8;i++)
+	{
+		spi_clk(0);   
+		if(cmd&0x80)
+		{
+			spi_mosi(1);
+		}
+		else
+		{
+			spi_mosi(0);
+		}
+		spi_clk(1); 
+		cmd = cmd<<1;
+	}
+	//spi_cs(1);
+}
+
+void spi_data(u8 data)
+{
+	u8 i;
+	
+	//spi_cs(0);
+	spi_clk(0);
+	spi_mosi(1); //data
+	spi_clk(1);
+	
+	for(i=0;i<8;i++)
+	{
+		spi_clk(0);   
+		if(data&0x80)
+		{
+			spi_mosi(1);
+		}
+		else
+		{
+			spi_mosi(0);
+		}
+		spi_clk(1); 
+		data = data<<1;
+	}
+	//spi_cs(1);
+}
+
+void lcd_spi_init(void) 
+{  
+	//// Reset LCD Driver////
+	lcd_reset(1);
+	mdelay(110); // Delay 1ms
+	lcd_reset(0);
+	mdelay(150); // Delay 10ms // This Delay time is necessary
+	lcd_reset(1);
+	mdelay(100); // Delay 50 ms
+	spi_cs(0);
+	mdelay(1);
+
+	//************* Start Initial Sequence **********//
+	spi_cmd(0xFF); // EXTC Command Set enable register
+	spi_data(0xFF);
+	spi_data(0x98);
+	spi_data(0x06);
+
+	spi_cmd(0xBA); // SPI Interface Setting
+	spi_data(0x60);
+
+	spi_cmd(0xBC); // GIP 1
+	spi_data(0x01);
+	spi_data(0x0E);
+	spi_data(0x61);
+	spi_data(0xFB);
+	spi_data(0x10);
+	spi_data(0x10);
+	spi_data(0x0B);
+	spi_data(0x0F);
+	spi_data(0x2E);
+	spi_data(0x73);
+	spi_data(0xFF);
+	spi_data(0xFF);
+	spi_data(0x0E);
+	spi_data(0x0E);
+	spi_data(0x00);
+
+	spi_data(0x03);
+	spi_data(0x66);
+	spi_data(0x63);
+	spi_data(0x01);
+	spi_data(0x00);
+	spi_data(0x00);
+
+	spi_cmd(0xBD); // GIP 2
+	spi_data(0x01);
+	spi_data(0x23);
+	spi_data(0x45);
+	spi_data(0x67);
+	spi_data(0x01);
+	spi_data(0x23);
+	spi_data(0x45);
+	spi_data(0x67);
+	spi_cmd(0xBE); // GIP 3
+	spi_data(0x00);
+	spi_data(0x21);
+	spi_data(0xAB);
+	spi_data(0x60);
+	spi_data(0x22);
+	spi_data(0x22);
+	spi_data(0x22);
+	spi_data(0x22);
+	spi_data(0x22);
+	spi_cmd(0xC7); // Vcom
+	spi_data(0x47);
+
+	spi_cmd(0xED); // EN_volt_reg
+	spi_data(0x7F);
+	spi_data(0x0F);
+	spi_data(0x00);
+
+	spi_cmd(0xB6); // Display Function Control
+	spi_data(0x20);    //02
+
+	spi_cmd(0xC0); // Power Control 1
+	spi_data(0x37);
+	spi_data(0x0B);
+	spi_data(0x0A);
+	spi_cmd(0xFC); // LVGL
+	spi_data(0x0A);
+	spi_cmd(0xDF); // Engineering Setting
+	spi_data(0x00);
+	spi_data(0x00);
+	spi_data(0x00);
+	spi_data(0x00);
+	spi_data(0x00);
+	spi_data(0x20);
+	spi_cmd(0xF3); // DVDD Voltage Setting
+	spi_data(0x74);
+	spi_cmd(0xB4); // Display Inversion Control
+	spi_data(0x00);
+	spi_data(0x00);
+	spi_data(0x00);
+	spi_cmd(0xF7); // 480x800
+	spi_data(0x82);
+	spi_cmd(0xB1); // Frame Rate
+	spi_data(0x00);
+	spi_data(0x12);
+	spi_data(0x13);
+	spi_cmd(0xF2); // CR/EQ/PC
+	spi_data(0x80);
+	spi_data(0x5B);
+	spi_data(0x40);
+	spi_data(0x28);
+
+    spi_cmd(0xB0);
+    spi_data(0x0F);//important...
+
+
+	spi_cmd(0xC1); // Power Control 2
+	spi_data(0x07);
+	spi_data(0x9F);
+	spi_data(0x71);
+	spi_data(0x20);
+	spi_cmd(0xE0); //Gamma
+	spi_data(0x00); //P1
+	spi_data(0x11); //P2
+	spi_data(0x18); //P3
+	spi_data(0x0C); //P4
+	spi_data(0x0F); //P5
+	spi_data(0x0D); //P6
+	spi_data(0x09); //P7
+	spi_data(0x08); //P8
+	spi_data(0x02); //P9
+	spi_data(0x06); //P10
+	spi_data(0x0F); //P11
+	spi_data(0x0E); //P12
+	spi_data(0x10); //P13
+	spi_data(0x18); //P14
+	spi_data(0x14); //P15
+	spi_data(0x00); //P16
+	spi_cmd(0xE1); //Gamma
+	spi_data(0x00); //P1
+	spi_data(0x05); //P2
+	spi_data(0x0D); //P3
+	spi_data(0x0B); //P4
+	spi_data(0x0D); //P5
+	spi_data(0x0B); //P6
+	spi_data(0x05); //P7
+	spi_data(0x03); //P8
+	spi_data(0x09); //P9
+	spi_data(0x0D); //P10
+	spi_data(0x0C); //P11
+	spi_data(0x10); //P12
+	spi_data(0x0B); //P13
+	spi_data(0x13); //P14
+
+
+	spi_data(0x09); //P15
+	spi_data(0x00); //P16
+	spi_cmd(0x35); //Tearing Effect ON
+	spi_data(0x00);
+
+
+	//spi_cmd(0x11); //Exit Sleep
+	//mdelay(120);
+	//spi_cmd(0x29); // Display On
+	//mdelay(120);
+	
+	spi_cs(1);
+}  
+
+void lcd_off (void)
+{
+	spi_cs(0);
+	spi_cmd(0x28); // Display off
+	mdelay(10);
+	spi_cmd(0x10); // Enter Standby mode
+	mdelay(120);
+	spi_cs(1);
+}
+
+void lcd_on(void)
+{
+	spi_cs(0);
+	spi_cmd(0x11); // Standby out
+	mdelay(120); 
+	spi_cmd(0x29); // Display on
+	spi_cs(1);
+}
+EXPORT_SYMBOL(lcd_on);
+
+ssize_t lcdproc_read(struct file *filp, char __user *usrbuf, size_t size, loff_t *offset)
+{
+	return 0;
+}
+
+static ssize_t lcdproc_write(struct file *filp, 
+				const char __user *usr_buf, size_t count, loff_t *f_pos)
+{
+	char len;
+	char cmd[100];
+    char buff[100] = {0};
+	int value, param_cnt;
+
+    len = count < 100 ? count : 99;
+    if(0 != copy_from_user(buff, usr_buf, len))
+    {
+        return count;
+    }
+    
+    buff[99] = '\0';
+
+	param_cnt = sscanf(buff, "%s %d", cmd, &value);
+	
+	if(0 == strncmp(cmd, "on", 2))
+    {
+		lcd_on();
+    }
+    else if(0 == strncmp(cmd, "off", 3))
+    {
+		lcd_off();
+    }
+	else
+	{
+		printk("wrong lcd command parameter\n");
+	}
+	
+    return count;
+}
+
+static const struct  proc_ops lcdproc_op = {
+    .proc_read = lcdproc_read,
+    .proc_write = lcdproc_write,
+};
+
+int  aura_lcd_init(void)
+{    
+    printk("auralic lcd inited!\n");
+	
+	/* create proc file /proc/PROC_ISP_NAME */
+    //if(NULL == proc_create(LCD_PROC_NAME, 0755, NULL, &lcdproc_op))   
+    {
+    //    printk("err: create /proc/%s failed!", LCD_PROC_NAME);
+    //    return 0;
+    }
+
+	if(0 > gpio_request(lcd_reset_pin, "lcd_reset_pin\n"))
+    {
+        printk("request lcd_reset_pin failed!\n");
+        return 0;
+    }
+
+	if(0 > gpio_request(spi_clk_pin, "spi_clk_pin\n"))
+    {
+        printk("request spi_clk_pin failed!\n");
+        return 0;
+    }
+
+	if(0 > gpio_request(spi_cs_pin, "spi_cs_pin\n"))
+    {
+        printk("request spi_cs_pin failed!\n");
+        return 0;
+    }
+
+	if(0 > gpio_request(spi_mosi_pin, "spi_mosi_pin\n"))
+    {
+        printk("request spi_mosi_pin failed!\n");
+        return 0;
+    }
+
+	if(0 > gpio_request(spi_miso_pin, "spi_miso_pin\n"))
+    {
+        printk("request spi_miso_pin failed!\n");
+        return 0;
+    }
+	
+	gpio_direction_output(lcd_reset_pin, 1);
+	gpio_direction_output(spi_clk_pin, 1);
+	gpio_direction_output(spi_cs_pin, 1);
+	gpio_direction_output(spi_mosi_pin, 1);
+	gpio_direction_output(spi_miso_pin, 1);
+
+	lcd_spi_init();
+
+	return 0;
+}
+#endif //CONFIG_AURALIC_LCD end
+
+//BEGIN LT9211 SETTINGS
+static int lt9211_read_chipid(struct ili9806g *ctx)
+{
+	u8 chipid[3];
+	int ret;
+
+	/* Read Chip ID registers and verify the chip can communicate. */
+	ret = regmap_bulk_read(ctx->regmap, REG_CHIPID0, chipid, 3);
+	if (ret < 0) {
+		dev_err(ctx->dev, "Failed to read Chip ID: %d\n", ret);
+		return ret;
+	}
+
+	/* Test for known Chip ID. */
+	if (chipid[0] != REG_CHIPID0_VALUE || chipid[1] != REG_CHIPID1_VALUE ||
+	    chipid[2] != REG_CHIPID2_VALUE) {
+		dev_err(ctx->dev, "Unknown Chip ID: 0x%02x 0x%02x 0x%02x\n",
+			chipid[0], chipid[1], chipid[2]);
+		return -EINVAL;
+	}
+		dev_err(ctx->dev, "Read Chip ID: 0x%02x 0x%02x 0x%02x\n",
+			chipid[0], chipid[1], chipid[2]);
+
+	return 0;
+}
+static int lt9211_system_init(struct ili9806g *ctx) //adjusted
+{
+	const struct reg_sequence lt9211_system_init_seq[] = {
+		{ 0x8201, 0x18 },
+		{ 0x8606, 0x61 },
+		{ 0x8607, 0xa8 },
+		{ 0x8714, 0x08 },
+		{ 0x8715, 0x00 },
+		{ 0x8718, 0x0f },
+		{ 0x8722, 0x08 },
+		{ 0x8723, 0x00 },
+		{ 0x8726, 0x0f },
+	};
+
+	return regmap_multi_reg_write(ctx->regmap, lt9211_system_init_seq,
+				      ARRAY_SIZE(lt9211_system_init_seq));
+}
+static int lt9211_configure_rx_phy(struct ili9806g *ctx)
+{
+	const struct reg_sequence lt9211_rx_phy_seq[] = {
+#ifdef INPUT_PORTA
+        /* LVDS Input A */
+        { 0x8202, 0x8B },
+		{ 0x8205, 0x21 },
+		{ 0x8207, 0x1f },
+		{ 0x8204, 0xa0 },
+		{ 0x8633, 0xe4 },
+#endif
+#ifdef INPUT_PORTB
+		/* LVDS Input B */
+		{ 0x8202, 0x88 },
+		{ 0x8205, 0x21 },
+		{ 0x820d, 0x21 },
+		{ 0x8207, 0x1f },
+		{ 0x820f, 0x1f },
+		{ 0x8204, 0xa1 },
+		{ 0x8210, 0xfc },
+		{ 0x8634, 0xe4 },
+		{ 0xd816, 0x80 },
+#endif
+	};
+	const struct reg_sequence lt9211_rx_cal_reset_seq[] = {
+		{ 0x8120, 0x7f },
+		{ 0x8120, 0xff },
+	};
+	int ret;
+
+	ret = regmap_multi_reg_write(ctx->regmap, lt9211_rx_phy_seq,
+				     ARRAY_SIZE(lt9211_rx_phy_seq));
+	if (ret)
+		return ret;
+    ret = regmap_multi_reg_write(ctx->regmap, lt9211_rx_cal_reset_seq,
+				     ARRAY_SIZE(lt9211_rx_cal_reset_seq));
+	if (ret)
+		return ret;
+    return 0;
+}
+static int lt9211_vid_chk_rst(struct ili9806g *ctx)
+{
+    //video chk soft rst
+    int ret;
+	ret = regmap_write(ctx->regmap, 0x8110, 0xbe);
+	if (ret)
+		return ret;
+	usleep_range(10000, 15000);
+	ret = regmap_write(ctx->regmap, 0x8110, 0xfe);
+	if (ret)
+		return ret;
+    return 0;
+}
+static int lt9211_lvdsrx_logic_rst(struct ili9806g *ctx)
+{
+    //lvds rx logic rst
+    int ret;
+	ret = regmap_write(ctx->regmap, 0x810c, 0xeb);
+	if (ret)
+		return ret;
+	usleep_range(10000, 15000);
+	ret = regmap_write(ctx->regmap, 0x810c, 0xfb);
+	if (ret)
+		return ret;
+    return 0;
+}
+static int lt9211_configure_rx_digital(struct ili9806g *ctx)
+{
+	const struct reg_sequence lt9211_rx_dig_seq[] = {
+		{ 0x8588, 0x00 },
+		{ 0xd810, (INPUT_PORT_NUM == 1)?0x80:0x00 },//1port 0x80,2port 0x00
+	};
+	int ret;
+	ret = regmap_multi_reg_write(ctx->regmap, lt9211_rx_dig_seq,
+				     ARRAY_SIZE(lt9211_rx_dig_seq));
+    
+    ret = lt9211_vid_chk_rst(ctx);
+    if(ret)
+        return ret;
+    
+    ret = lt9211_lvdsrx_logic_rst(ctx);
+    if(ret)
+        return ret;
+
+	ret = regmap_write(ctx->regmap, 0x8630, 0x45);//port AB input port sel
+	if (ret)
+		return ret;
+    return 0;
+}
+static int lt9211_check_rx_clk_stable(struct ili9806g *ctx)
+{
+    int ret;
+	u8 pval;
+	ret = regmap_bulk_read(ctx->regmap, 0x8712, &pval, sizeof(pval));
+	if (ret)
+		return ret;
+    if(pval &0x80)
+    {
+        printk(KERN_ERR "RX PLL locked\n");
+        return 0;
+    }
+    else
+    {
+        printk(KERN_ERR "RX PLL unlocked\n");
+        return -1;
+    }
+    return 0;
+}
+static int lt9211_configure_rx_pll(struct ili9806g *ctx)
+{
+    int ret;
+    int i;
+	unsigned int pval;
+	const struct reg_sequence lt9211_rx_pll_seq[] = {
+		{ 0x8225, 0x07 },
+		{ 0x8227, 0x32 },
+        { 0x8224, (INPUT_PORT_NUM == 1)?0x24:0x2c },
+        { 0x8228, (INPUT_PORT_NUM == 1)?0x44:0x64 },
+	};
+	ret = regmap_multi_reg_write(ctx->regmap, lt9211_rx_pll_seq,
+				     ARRAY_SIZE(lt9211_rx_pll_seq));
+    msleep(10);
+	
+	ret = regmap_write(ctx->regmap, 0x8120, 0xdf);
+	if (ret)
+		return ret;
+	ret = regmap_write(ctx->regmap, 0x8120, 0xff);
+	if (ret)
+		return ret;
+    msleep(500);
+    for(i = 0;i<10;i++)
+    {
+        ret = lt9211_check_rx_clk_stable(ctx);
+        if(!ret) break;
+        msleep(10);
+    }
+    /*
+	ret = regmap_read_poll_timeout(ctx->regmap, 0x8712, pval, pval & 0x80,
+				       20000, 10000000);
+	if (ret)
+		dev_err(ctx->dev, "RX PLL unstable, ret=%i\n", ret);
+    */
+    return 0;
+}
+static int lt9211_configure_rx(struct ili9806g *ctx)//adjusted
+{
+	int ret;
+    //begin configure rx phy
+    ret = lt9211_configure_rx_phy(ctx);
+	if (ret)
+		return ret;
+	//end configure rx phy
+
+
+    //begin configure rx digital
+    ret = lt9211_configure_rx_digital(ctx);
+	if (ret)
+		return ret;
+	//end configure rx digital
+	
+    return ret;
+}
+static int lt9211_lvds_clkstb_check(struct ili9806g *ctx)
+{
+    int ret;
+    u8 porta_clk_state;
+    u8 portb_clk_state;
+    u8 bc;
+    //port a
+    ret = regmap_write(ctx->regmap,0x8600,0x01);
+    if(ret) return ret;
+    msleep(300);
+    regmap_bulk_read(ctx->regmap,0x8608,&bc,sizeof(bc));
+    if(ret) return ret;
+    porta_clk_state = bc & 0x20;
+    
+    //port b
+    ret = regmap_write(ctx->regmap,0x8600,0x02);
+    if(ret) return ret;
+    msleep(300);
+    regmap_bulk_read(ctx->regmap,0x8608,&bc,sizeof(bc));
+    if(ret) return ret;
+    portb_clk_state = bc & 0x20;
+    if(INPUT_PORT_NUM == 1)
+    {
+        #ifdef INPUT_PORTA
+        if( porta_clk_state )
+        {
+            return 1;
+        }
+        else
+        {
+            return 0;
+        }
+        #endif
+        #ifdef INPUT_PORTB
+        if( portb_clk_state )
+        {
+            return 1;
+        }
+        else
+        {
+            return 0;
+        }
+        #endif
+    }
+    else if(INPUT_PORT_NUM == 2)
+    {
+        if(porta_clk_state && portb_clk_state)
+        {
+            return 1;
+        }
+        else
+        {
+            return 0;
+        }
+    }
+}
+static int lt9211_autodetect_rx(struct ili9806g *ctx)
+//				const struct drm_display_mode *mode) //adjusted
+{
+	u16 width, height;
+	u32 byteclk;
+	u8 buf[5];
+	u8 format;
+	u8 bc[3];
+	int ret;
+#ifdef INPUT_PORTA
+	/* Measure ByteClock frequency. */
+	ret = regmap_write(ctx->regmap, 0x8600, 0x01);
+	if (ret)
+		return ret;
+
+	/* Give the chip time to lock onto RX stream. */
+	msleep(100);
+
+	/* Read the ByteClock frequency from the chip. */
+	ret = regmap_bulk_read(ctx->regmap, 0x8608, bc, sizeof(bc));
+	if (ret)
+		return ret;
+
+	/* RX ByteClock in kHz */
+	byteclk = ((bc[0] & 0xf) << 16) | (bc[1] << 8) | bc[2];
+    dev_err(ctx->dev,"porta byteclk is:%d\n",byteclk);
+#endif
+#ifdef INPUT_PORTB
+	ret = regmap_write(ctx->regmap, 0x8600, 0x02);
+	if (ret)
+		return ret;
+
+	/* Give the chip time to lock onto RX stream. */
+	msleep(100);
+
+	/* Read the ByteClock frequency from the chip. */
+	ret = regmap_bulk_read(ctx->regmap, 0x8608, bc, sizeof(bc));
+	if (ret)
+		return ret;
+
+	/* RX ByteClock in kHz */
+	byteclk = ((bc[0] & 0xf) << 16) | (bc[1] << 8) | bc[2];
+    dev_err(ctx->dev,"portb byteclk is:%d\n",byteclk);
+#endif
+	/* Width/Height/Format Auto-detection */
+#if 0
+	ret = regmap_bulk_read(ctx->regmap, 0xd082, buf, sizeof(buf));
+	if (ret)
+		return ret;
+
+	width = (buf[0] << 8) | buf[1];
+	height = (buf[3] << 8) | buf[4];
+	format = buf[2] & 0xf;
+
+	if (format == 0x3) {		/* YUV422 16bit */
+		width /= 2;
+	} else if (format == 0xa) {	/* RGB888 24bit */
+		width /= 3;
+	} else {
+		//dev_err(ctx->dev, "Unsupported DSI pixel format 0x%01x\n",
+	//		format);
+		//return -EINVAL;
+	}
+#endif
+/*
+	if (width != mode->hdisplay) {
+		dev_err(ctx->dev,
+			"RX: Detected DSI width (%d) does not match mode hdisplay (%d)\n",
+			width, mode->hdisplay);
+		return -EINVAL;
+	}
+
+	if (height != mode->vdisplay) {
+		dev_err(ctx->dev,
+			"RX: Detected DSI height (%d) does not match mode vdisplay (%d)\n",
+			height, mode->vdisplay);
+		return -EINVAL;
+	}
+*/
+	dev_err(ctx->dev, "RX: %dx%d format=0x%01x byteclock=%d kHz\n",
+		width, height, format, byteclk);
+
+	return 0;
+}
+#if 1
+static int lt9211_configure_timing(struct ili9806g *ctx,
+				   const struct drm_display_mode *mode)
+{
+	const struct reg_sequence lt9211_timing[] = {
+		{ 0xd00d, (mode->vtotal >> 8) & 0xff },
+		{ 0xd00e, mode->vtotal & 0xff },
+		{ 0xd00f, (mode->vdisplay >> 8) & 0xff },
+		{ 0xd010, mode->vdisplay & 0xff },
+		{ 0xd011, (mode->htotal >> 8) & 0xff },
+		{ 0xd012, mode->htotal & 0xff },
+		{ 0xd013, (mode->hdisplay >> 8) & 0xff },
+		{ 0xd014, mode->hdisplay & 0xff },
+		{ 0xd015, (mode->vsync_end - mode->vsync_start) & 0xff },
+		{ 0xd016, (mode->hsync_end - mode->hsync_start) & 0xff },
+		{ 0xd017, ((mode->vsync_start - mode->vdisplay) >> 8) & 0xff },
+		{ 0xd018, (mode->vsync_start - mode->vdisplay) & 0xff },
+		{ 0xd019, ((mode->hsync_start - mode->hdisplay) >> 8) & 0xff },
+		{ 0xd01a, (mode->hsync_start - mode->hdisplay) & 0xff },
+	};
+
+	return regmap_multi_reg_write(ctx->regmap, lt9211_timing,
+				      ARRAY_SIZE(lt9211_timing));
+}
+
+static int lt9211_configure_plls(struct ili9806g *ctx,
+				 const struct drm_display_mode *mode)
+{
+	const struct reg_sequence lt9211_pcr_seq[] = {
+		{ 0xd026, 0x17 },
+		{ 0xd027, 0xc3 },
+		{ 0xd02d, 0x30 },
+		{ 0xd031, 0x10 },
+		{ 0xd023, 0x20 },
+		{ 0xd038, 0x02 },
+		{ 0xd039, 0x10 },
+		{ 0xd03a, 0x20 },
+		{ 0xd03b, 0x60 },
+		{ 0xd03f, 0x04 },
+		{ 0xd040, 0x08 },
+		{ 0xd041, 0x10 },
+		{ 0x810b, 0xee },
+		{ 0x810b, 0xfe },
+	};
+
+	unsigned int pval;
+	int ret;
+
+	/* DeSSC PLL reference clock is 25 MHz XTal. */
+	ret = regmap_write(ctx->regmap, 0x822d, 0x48);
+	if (ret)
+		return ret;
+
+	if (mode->clock < 44000) {
+		ret = regmap_write(ctx->regmap, 0x8235, 0x83);
+	} else if (mode->clock < 88000) {
+		ret = regmap_write(ctx->regmap, 0x8235, 0x82);
+	} else if (mode->clock < 176000) {
+		ret = regmap_write(ctx->regmap, 0x8235, 0x81);
+	} else {
+		dev_err(ctx->dev,
+			"Unsupported mode clock (%d kHz) above 176 MHz.\n",
+			mode->clock);
+		return -EINVAL;
+	}
+
+	if (ret)
+		return ret;
+
+	/* Wait for the DeSSC PLL to stabilize. */
+	msleep(100);
+
+	ret = regmap_multi_reg_write(ctx->regmap, lt9211_pcr_seq,
+				     ARRAY_SIZE(lt9211_pcr_seq));
+	if (ret)
+		return ret;
+
+	/* PCR stability test takes seconds. */
+	ret = regmap_read_poll_timeout(ctx->regmap, 0xd087, pval, pval & 0x8,
+				       20000, 10000000);
+	if (ret)
+		dev_err(ctx->dev, "PCR unstable, ret=%i\n", ret);
+
+	return ret;
+}
+#endif
+static int lt9211_configure_tx_pll(struct ili9806g *ctx)
+{
+
+	unsigned int pval;
+	int ret;
+	u8 bc[2];
+    u8 loopx;
+    u32 pixclk = 0;
+    u32 m_value = 2;
+    //begin set tx pll
+    if(LT9211_OutPutModde == OUTPUT_BT656_8BIT)
+    {
+        pixclk = pVideo_Format->pclk_khz;
+        ret = regmap_write(ctx->regmap, 0x822d, 0x98);
+        if (ret)
+            return ret;
+        if(pixclk < 10000)
+        {
+            return 1;
+        }
+        while((pixclk * m_value) < 352000)
+        {
+            m_value = m_value << 1;
+        }
+        ret = regmap_write(ctx->regmap, 0x8234, (m_value-2) | 0x80);
+        if (ret)
+            return ret;
+        if((m_value/2) == 1)
+        {
+            ret = regmap_write(ctx->regmap, 0x8230, 0x40);
+            if (ret)
+                return ret;
+            ret = regmap_write(ctx->regmap, 0x8233, 0x10);
+            if (ret)
+                return ret;
+        }
+        else if((m_value/2) == 2)
+        {
+            ret = regmap_write(ctx->regmap, 0x8230, 0x41);
+            if (ret)
+                return ret;
+            ret = regmap_write(ctx->regmap, 0x8233, 0x11);
+            if (ret)
+                return ret;
+        }
+        else if((m_value/2) == 4)
+        {
+            ret = regmap_write(ctx->regmap, 0x8230, 0x42);
+            if (ret)
+                return ret;
+            ret = regmap_write(ctx->regmap, 0x8233, 0x12);
+            if (ret)
+                return ret;
+        }
+        else if((m_value/2) == 8)
+        {
+            ret = regmap_write(ctx->regmap, 0x8230, 0x43);
+            if (ret)
+                return ret;
+            ret = regmap_write(ctx->regmap, 0x8233, 0x13);
+            if (ret)
+                return ret;
+        }
+
+    }
+    else if((LT9211_OutPutModde == OUTPUT_RGB888) || (LT9211_OutPutModde ==OUTPUT_BT1120_16BIT))
+    {
+        ret = regmap_write(ctx->regmap, 0x8236, 0x01);
+        if (ret)
+            return ret;
+        ret = regmap_write(ctx->regmap, 0x8237, 0x2a);
+        if (ret)
+            return ret;
+        ret = regmap_write(ctx->regmap, 0x8238, 0x06);
+        if (ret)
+            return ret;
+        ret = regmap_write(ctx->regmap, 0x8239, 0x30);
+        if (ret)
+            return ret;
+        ret = regmap_write(ctx->regmap, 0x823a, 0x8e);
+        if (ret)
+            return ret;
+        ret = regmap_write(ctx->regmap, 0x8120, 0xf7);
+        if (ret)
+            return ret;
+        ret = regmap_write(ctx->regmap, 0x8120, 0xff);
+        if (ret)
+            return ret;
+        ret = regmap_write(ctx->regmap, 0x8737, 0x14);
+        if (ret)
+            return ret;
+        ret = regmap_write(ctx->regmap, 0x8713, 0x00);
+        if (ret)
+            return ret;
+        ret = regmap_write(ctx->regmap, 0x8713, 0x80);
+        if (ret)
+            return ret;
+        msleep(100);
+        
+        ret = regmap_read_poll_timeout(ctx->regmap, 0x871f, pval, pval & 0x80,
+                10000, 1000000);
+        if (ret) {
+            dev_err(ctx->dev, "TX PLL unstable, ret=%i\n", ret);
+            return ret;
+        }
+
+        ret = regmap_read_poll_timeout(ctx->regmap, 0x8720, pval, pval & 0x80,
+                10000, 1000000);
+        if (ret) {
+            dev_err(ctx->dev, "TX PLL unstable, ret=%i\n", ret);
+            return ret;
+        }
+        dev_err(ctx->dev, "TX PLL is stable\n");
+    }
+    //end set tx pll
+
+	return 0;
+}
+static int lt9211_configure_tx_digital(struct ili9806g *ctx)
+{
+	const struct reg_sequence system_lt9211_tx_dig_seq_rgb888[] = {
+		{ 0x8588, 0x00 },
+		{ 0x8560, 0x00 },
+		{ 0x856d, 0x00 },
+		{ 0x856E, 0x00 },
+		{ 0x8136, 0xc0 },
+	};
+	const struct reg_sequence system_lt9211_tx_dig_seq_bt656[] = {
+		{ 0x8560, 0x34 },
+		{ 0x856d, 0x00 },
+		{ 0x856E, 0x06 },
+		{ 0x856f, 0x04 },
+        { 0x810d, 0xfd },
+        { 0x810d, 0xff },
+        { 0x8136, 0xc0 },
+	};
+	const struct reg_sequence system_lt9211_tx_dig_seq_bt1120[] = {
+		{ 0x8560, 0x33 },
+		{ 0x856d, 0x00 },
+		{ 0x856E, 0x06 },
+		{ 0x856f, 0x04 },
+        { 0x810d, 0xfd },
+        { 0x810d, 0xff },
+	};
+    int ret;
+    if( LT9211_OutPutModde == OUTPUT_RGB888)
+    {
+        ret = regmap_multi_reg_write(ctx->regmap, system_lt9211_tx_dig_seq_rgb888,
+                ARRAY_SIZE(system_lt9211_tx_dig_seq_rgb888));
+        if (ret)
+            return ret;
+    }
+    else if( LT9211_OutPutModde == OUTPUT_BT656_8BIT)
+    {
+        ret = regmap_multi_reg_write(ctx->regmap, system_lt9211_tx_dig_seq_bt656,
+                ARRAY_SIZE(system_lt9211_tx_dig_seq_bt656));
+        if (ret)
+            return ret;
+    }
+    else if( LT9211_OutPutModde == OUTPUT_BT1120_16BIT)
+    {
+        ret = regmap_multi_reg_write(ctx->regmap, system_lt9211_tx_dig_seq_bt1120,
+                ARRAY_SIZE(system_lt9211_tx_dig_seq_bt1120));
+        if (ret)
+            return ret;
+    }
+    return 0;
+
+}
+static int lt9211_configure_tx_phy(struct ili9806g *ctx)
+{
+    int ret ;
+	u8 bc;
+
+	/* Measure ByteClock frequency. */
+	ret = regmap_write(ctx->regmap, 0x8223, 0x02);
+	if (ret)
+		return ret;
+
+	ret = regmap_write(ctx->regmap, 0x8262, 0x01);
+	if (ret)
+		return ret;
+	ret = regmap_write(ctx->regmap, 0x826b, 0xff);
+	if (ret)
+		return ret;
+
+	/* Read the ByteClock frequency from the chip. */
+	ret = regmap_bulk_read(ctx->regmap, 0x8102, &bc, sizeof(bc));
+	if (ret)
+		return ret;
+    if(bc == 0xe4)
+    {
+        ret = regmap_write(ctx->regmap, 0x8263, 0x00);
+        if (ret)
+            return ret;
+    }
+    else
+    {
+        ret = regmap_write(ctx->regmap, 0x8263, 0xff);
+        if (ret)
+            return ret;
+    }
+    return 0;
+}
+static int lt9211_configure_tx(struct ili9806g *ctx)
+{
+
+	int ret;
+    //begin set tx phy
+    ret = lt9211_configure_tx_phy(ctx);
+    if(ret)
+        return ret;
+    //end set tx phy
+
+
+    //begin set tx digital
+    ret = lt9211_configure_tx_digital(ctx);
+    if(ret)
+        return ret;
+    //end set tx digital
+    
+    //begin set tx pll
+    ret = lt9211_configure_tx_pll(ctx);
+    if(ret)
+        return ret;
+    //end set tx pll
+
+	return 0;
+}
+static int lt9211_video_check(struct ili9806g *ctx)
+{
+    u8 sync_polarity;    
+    int ret;
+    u8 bc[18];
+    ret = regmap_write(ctx->regmap, 0x8620, 0x00);
+    if (ret)
+    {
+        printk(KERN_ERR "lt9211_video_check..\n");
+        return ret;
+    }
+    msleep(100);
+
+    /* Read the ByteClock frequency from the chip. */
+    ret = regmap_bulk_read(ctx->regmap, 0x8670, bc, sizeof(bc));
+    if (ret)
+        return ret;
+    sync_polarity = bc[0];
+    vs = bc[1];
+    hs = bc[2]<<8 | bc[3];
+    vbp = bc[4];
+    vfp = bc[5];
+    hbp = bc[6]<<8 | bc[7];
+    hfp = bc[8]<<8 | bc[9];
+    vtotal = bc[10]<<8 | bc[11];
+    htotal = bc[12]<<8 | bc[13];
+    vact = bc[14]<<8 | bc[15];
+    hact = bc[16]<<8 | bc[17];
+    if ((hact == video_1280x720_60Hz.hact ) &&( vact == video_1280x720_60Hz.vact ))
+    {
+        pVideo_Format = &video_1280x720_60Hz;
+        printk(KERN_ERR "aaaaaaa\n");
+    }
+    else if ((hact == video_1920x1080_30Hz.hact ) &&( vact == video_1920x1080_30Hz.vact ))
+    {
+        pVideo_Format = &video_1920x1080_30Hz;
+        printk(KERN_ERR "aaaaaaa1111\n");
+    }
+    else if ((hact == video_480x800_60Hz.hact ) &&( vact == video_480x800_60Hz.vact ))
+    {
+        pVideo_Format = &video_480x800_60Hz;
+        //printk(KERN_ERR "aaaaaaa2222\n");
+        printk(KERN_ERR "aaaaaaa22222===%d==%d==%d==%d==%d===%d==%d=%d===%d===%d==%d\n",sync_polarity,hfp,hs,hbp,hact,htotal,vfp,vs,vbp,vact,vtotal);
+    }
+    else 
+    {
+        printk(KERN_ERR "aaaaaaa4444=====%d==%d==%d==%d===%d==%d=%d===%d===%d==%d\n",hfp,hs,hbp,hact,htotal,vfp,vs,vbp,vact,vtotal);
+        pVideo_Format = NULL;
+    }
+    return ret;
+}
+static int lt9211_RXCSC(struct ili9806g *ctx)
+{
+    //ttl 输出不用这个函数
+    int ret;
+	const struct reg_sequence system_lt9211_rxcsc_seq[] = {
+		{ 0xf986, 0x0f },
+		{ 0xf987, 0x30 },
+    };
+    if( (LT9211_OutPutModde == OUTPUT_BT656_8BIT) || (LT9211_OutPutModde ==OUTPUT_BT1120_16BIT))
+    {
+        if( Video_Input_Mode == Input_RGB888 )
+        {
+            ret = regmap_multi_reg_write(ctx->regmap, system_lt9211_rxcsc_seq,
+                    ARRAY_SIZE(system_lt9211_rxcsc_seq));
+            if (ret)
+                return ret;
+        }
+    }
+    return 0;
+}
+static int lt9211_BT_set(struct ili9806g *ctx)
+{
+    //ttl输出不用这个函数
+    int ret;
+	const struct reg_sequence system_lt9211_bt_set_seq[] = {
+		{ 0x8561, (u8)((hs+hbp)>>8) },
+		{ 0x8562, (u8)(hs+hbp) },
+		{ 0x8563, (u8)(hact>>8) },
+		{ 0x8564, (u8)hact },
+        { 0x8565, (u8)(htotal>>8) },
+        { 0x8566, (u8)htotal },
+        { 0x8567, (u8)(vs+vbp) },
+        { 0x8568, 0x00 },
+        { 0x8569, (u8)(vact>>8) },
+        { 0x856a, (u8)vact },
+        { 0x856b, (u8)(vtotal>>8) },
+        { 0x856c, (u8)vtotal },
+    };
+        if( (LT9211_OutPutModde == OUTPUT_BT1120_16BIT) || (LT9211_OutPutModde == OUTPUT_BT656_8BIT) )
+        {
+            ret = regmap_multi_reg_write(ctx->regmap, system_lt9211_bt_set_seq,
+                    ARRAY_SIZE(system_lt9211_bt_set_seq));
+            if (ret)
+                return ret;
+        }
+    return 0;
+}
+static int lt9211_lvds_tx_logic_rst(struct ili9806g *ctx)
+{
+    int ret;
+    ret = regmap_write(ctx->regmap,0x810d,0xfb);
+    if(ret) 
+    {
+        return ret;
+    }
+    msleep(10);
+    ret = regmap_write(ctx->regmap,0x810d,0xff);
+    if(ret) return ret;
+    return 0;
+}
+static int lt9211_lvds_tx_en(struct ili9806g *ctx)
+{
+    int ret;
+    ret = lt9211_lvds_tx_logic_rst(ctx);
+    if(ret) return ret;
+    ret = regmap_write(ctx->regmap,0x823b,0x38);
+    if(ret) return ret;
+    return 0;
+    
+}
+//END LT9211 SETTINGS
+
+static const struct drm_display_mode ili9806e_480x800_mode = {
+	.clock = 26730,
+	.hdisplay = 480,
+	.hsync_start = 480 + 30,
+	.hsync_end = 480 + 30 + 10,
+	.htotal = 480 + 30 + 10 + 30,
+	.vdisplay = 800,
+	.vsync_start = 800 + 8,
+	.vsync_end = 800 + 8 + 2,
+	.vtotal = 800 + 8 + 2 + 15,
+	.flags = DRM_MODE_FLAG_NHSYNC | DRM_MODE_FLAG_NVSYNC,
+};
+static const struct drm_display_mode ili9806e_480x800_mode1 = {
+	.clock = 37580,
+	.hdisplay = 480,
+	.hsync_start = 480 + 164,
+	.hsync_end = 480 + 164 + 10,
+	.htotal = 480 + 164 + 10 + 89,
+	.vdisplay = 800,
+	.vsync_start = 800 + 10,
+	.vsync_end = 800 + 10 + 10,
+	.vtotal = 800 + 10 + 10 + 23,
+	.flags = DRM_MODE_FLAG_PHSYNC | DRM_MODE_FLAG_PVSYNC,
+};
+static const struct drm_display_mode ili9806e_480x800_mode2 = {
+	.clock = 32520,
+	.hdisplay = 480,
+	.hsync_start = 480 + 64,
+	.hsync_end = 480 + 64 + 10,
+	.htotal = 480 + 64 + 10 + 89,
+	.vdisplay = 800,
+	.vsync_start = 800 + 10,
+	.vsync_end = 800 + 10 + 10,
+	.vtotal = 800 + 10 + 10 + 23,
+	.flags = DRM_MODE_FLAG_PHSYNC | DRM_MODE_FLAG_PVSYNC,
+};
+static const struct drm_display_mode ili9806e_480x800_mode3 = {
+	.clock = 37580,
+	.hdisplay = 480,
+	.hsync_start = 480 + 164,
+	.hsync_end = 480 + 164 + 10,
+	.htotal = 480 + 164 + 10 + 89,
+	.vdisplay = 800,
+	.vsync_start = 800 + 10,
+	.vsync_end = 800 + 10 + 10,
+	.vtotal = 800 + 10 + 10 + 23,
+	.flags = DRM_MODE_FLAG_NHSYNC | DRM_MODE_FLAG_NVSYNC,
+};
+static const struct drm_display_mode ili9806e_480x800_mode4 = {
+	.clock = 37580,
+	.hdisplay = 480,
+	.hsync_start = 480 + 464,
+	.hsync_end = 480 + 464 + 10,
+	.htotal = 480 + 464 + 10 + 89,
+	.vdisplay = 800,
+	.vsync_start = 800 + 10,
+	.vsync_end = 800 + 10 + 10,
+	.vtotal = 800 + 10 + 10 + 2,
+	.flags = DRM_MODE_FLAG_PHSYNC | DRM_MODE_FLAG_PVSYNC,
+};
+static const struct drm_display_mode ili9806e_480x800_mode5 = {
+	.clock = 52755,//频率太高
+	.hdisplay = 480,
+	.hsync_start = 480 + 464,
+	.hsync_end = 480 + 464 + 10,
+	.htotal = 480 + 464 + 10 + 89,
+	.vdisplay = 800,
+	.vsync_start = 800 +10,
+	.vsync_end = 800 +10 + 10,
+	.vtotal = 800 + 10 + 10 + 23,
+	.flags = DRM_MODE_FLAG_NHSYNC | DRM_MODE_FLAG_NVSYNC,
+};
+
+static int ili9806g_display_on(struct ili9806g *ctx)
+{
+    lcd_on();
+    return 0;
+}
+
+static int ili9806g_display_off(struct ili9806g *ctx)
+{
+    lcd_off();
+    return 0;
+}
+static int ili9806g_init(struct ili9806g *ctx)
+{
+    lcd_spi_init();
+    return 0;
+}
+
+static int ili9806g_power_on(struct ili9806g *ctx)
+{
+	dev_err(ctx->panel.dev, "LCD power on\n");
+	return ili9806g_display_on(ctx);
+}
+
+static int ili9806g_disable(struct drm_panel *panel)
+{
+	struct ili9806g *ctx = panel_to_ili9806g(panel);
+	dev_err(ctx->panel.dev, "LCD disabled....\n");
+
+	return ili9806g_display_off(ctx);
+}
+
+static int ili9806g_enable(struct drm_panel *panel)
+{
+	struct ili9806g *ctx = panel_to_ili9806g(panel);
+	dev_err(ctx->panel.dev, "LCD enabled...\n");
+
+	ili9806g_init(ctx);
+
+	return ili9806g_power_on(ctx);
+}
+static int ili9806g_prepare(struct drm_panel *panel)
+{
+    int ret;
+	struct ili9806g *ctx = panel_to_ili9806g(panel);
+	dev_err(ctx->panel.dev, "LCD prepared...\n");
+
+    lcd_spi_init();
+
+#if 1
+	gpiod_set_value(ctx->reset_gpio, 1);
+	usleep_range(20000, 21000);	/* Very long post-reset delay. */
+
+	ret = lt9211_read_chipid(ctx);
+	if (ret)
+		return 1;
+
+	ret = lt9211_system_init(ctx);
+	if (ret)
+		return 1;
+
+	ret = lt9211_configure_rx(ctx);
+	if (ret)
+		return 1;
+
+    ret = lt9211_configure_rx_pll(ctx);
+    if (ret)
+        return 1;
+    lt9211_enabled = true;
+    if(lt9211_task)
+        wake_up_process(lt9211_task);
+//	ret = lt9211_autodetect_rx(ctx);//检测rx的时钟以及format
+//	if (ret)
+//		return 1;
+/*
+	ret = lt9211_configure_timing(ctx,&ili9806e_480x800_mode);
+	if (ret)
+		return 1;
+
+	ret = lt9211_configure_plls(ctx,&ili9806e_480x800_mode);
+	if (ret)
+		return 1;
+*/
+
+    /*
+	ret = lt9211_configure_tx(ctx);
+	if (ret)
+		return 1;
+
+    ret = lt9211_lvds_tx_en(ctx);
+    if (ret)
+        return 1;
+    */
+	dev_err(ctx->panel.dev, "LT9211 enabled.\n");
+#endif
+	return 0;
+}
+static int ili9806g_unprepare(struct drm_panel *panel)
+{
+	struct ili9806g *ctx = panel_to_ili9806g(panel);
+    /*
+    struct ili9806g_msg msg = {
+        .len = 1,
+        .msg = {0x10}
+    };
+    */
+	dev_err(ctx->panel.dev, "LCD unprepared\n");
+    lcd_off();
+	return 0;
+}
+/*
+static const struct drm_display_mode ili9806e_480x800_mode0 = {
+	.clock = 32000,
+	.hdisplay = 480,
+	.hsync_start = 480 + 10,
+	.hsync_end = 480 + 10 + 16,
+	.htotal = 480 + 10 + 16 + 59,
+	.vdisplay = 800,
+	.vsync_start = 800 + 15,
+	.vsync_end = 800 + 15+15,
+	.vtotal = 800 + 15+15 ,
+	.flags = DRM_MODE_FLAG_PHSYNC | DRM_MODE_FLAG_NVSYNC,
+};
+*/
+
+static int ili9806g_get_modes(struct drm_panel *panel,
+			    struct drm_connector *connector)
+{
+	struct ili9806g *ctx = panel_to_ili9806g(panel);
+	struct drm_display_mode *mode;
+
+#if 1
+	mode = drm_mode_create(connector->dev);
+	if (!mode)
+		return 0;
+
+	drm_display_mode_from_videomode(&ctx->vm, mode);
+	mode->type |= DRM_MODE_TYPE_DRIVER | DRM_MODE_TYPE_PREFERRED;
+	drm_mode_probed_add(connector, mode);
+
+	connector->display_info.width_mm = ctx->width;
+	connector->display_info.height_mm = ctx->height;
+	drm_display_info_set_bus_formats(&connector->display_info,
+					 &ctx->bus_format, 1);
+	connector->display_info.bus_flags = DRM_BUS_FLAG_PIXDATA_DRIVE_NEGEDGE;
+	drm_connector_set_panel_orientation(connector, ctx->orientation);
+#endif
+#if 0 
+	mode = drm_mode_duplicate(connector->dev, &ili9806e_480x800_mode);
+	if (!mode) {
+		dev_err(panel->dev, "failed to add mode %ux%ux@%u\n",
+			ili9806e_480x800_mode, ili9806e_480x800_mode.vdisplay,
+			drm_mode_vrefresh(&ili9806e_480x800_mode));
+		return -ENOMEM;
+	}
+	dev_err(panel->dev, "add mode %ux%ux@%u\n",
+		ili9806e_480x800_mode.hdisplay, ili9806e_480x800_mode.vdisplay,
+		drm_mode_vrefresh(&ili9806e_480x800_mode));
+    drm_mode_set_crtcinfo(mode, CRTC_STEREO_DOUBLE_ONLY);
+	drm_mode_set_name(mode);
+
+	mode->type = DRM_MODE_TYPE_DRIVER | DRM_MODE_TYPE_PREFERRED;
+	mode->width_mm = 52;
+    mode->height_mm = 86;
+    drm_mode_probed_add(connector, mode);
+
+	connector->display_info.width_mm = 52;
+	connector->display_info.height_mm = 86;
+	
+    drm_display_info_set_bus_formats(&connector->display_info,
+					 &ctx->bus_format, 1);
+	connector->display_info.bus_flags = DRM_BUS_FLAG_PIXDATA_DRIVE_NEGEDGE;
+
+
+    drm_connector_set_panel_orientation(connector, ctx->orientation);
+#endif
+
+	return 1;
+}
+
+
+
+
+static const struct drm_panel_funcs ili9806g_drm_funcs = {
+	.disable = ili9806g_disable,
+	.enable = ili9806g_enable,
+	.get_modes = ili9806g_get_modes,
+	.prepare	= ili9806g_prepare,
+	.unprepare	= ili9806g_unprepare,
+	//.get_timings = panel_simple_get_timings,
+};
+
+int lt9211_task_fn(void *data)
+{
+    static int flag_lvds_chg = 1;
+	struct ili9806g *ctx = (struct ili9806g*)data;
+    printk(KERN_ERR, "auralic start i2c_task_fn\n");
+    while(!kthread_should_stop())
+    {
+        if(!lt9211_enabled)
+        {
+            set_current_state(TASK_INTERRUPTIBLE);
+            schedule();
+        }
+        //lt9211_vid_chk_rst(ctx);
+        if(lt9211_lvds_clkstb_check(ctx))
+        {
+            if( flag_lvds_chg )
+            {
+                printk(KERN_ERR "lvds clk is stable\n");
+                
+                lt9211_autodetect_rx(ctx);
+                lt9211_configure_rx_pll(ctx);
+                lt9211_vid_chk_rst(ctx);
+                lt9211_lvdsrx_logic_rst(ctx);
+                msleep(100);
+                lt9211_video_check(ctx);
+                
+                lt9211_configure_tx(ctx);
+                
+                lt9211_lvds_tx_en(ctx);
+
+                /*
+                lt9211_video_check(ctx);
+                msleep(100);
+                lt9211_check_rx_clk_stable(ctx);
+                msleep(100);
+                */
+                flag_lvds_chg = 0;
+            }
+        }
+        else
+        {
+            if( !flag_lvds_chg )
+            {
+                printk(KERN_ERR "lvds clk not stable\n");
+                flag_lvds_chg = 1;
+            }
+        }
+        msleep(3000);
+    }
+    set_current_state(TASK_RUNNING);
+    printk(KERN_ERR, "auralic leave i2c_task_fn\n");
+    return 0;
+}
+
+static int panel_lvds_parse_dt(struct ili9806g *ctx)
+{
+    struct device_node *np = ctx->dev->of_node;
+	struct display_timing timing;
+	const char *mapping;
+    int ret;
+    ret = of_drm_get_panel_orientation(np, &ctx->orientation);
+    if (ret < 0) {
+        dev_err(ctx->dev, "%pOF: failed to get orientation %d\n", np, ret);
+        return ret;
+    }
+	ret = of_get_display_timing(np, "panel-timing", &timing);
+	if (ret < 0) {
+		dev_err(ctx->dev, "%pOF: problems parsing panel-timing (%d)\n",
+			np, ret);
+		return ret;
+	}
+
+	videomode_from_timing(&timing, &ctx->vm);
+
+	ret = of_property_read_u32(np, "width-mm", &ctx->width);
+	if (ret < 0) {
+		dev_err(ctx->dev, "%pOF: invalid or missing %s DT property\n",
+			np, "width-mm");
+		return -ENODEV;
+	}
+	ret = of_property_read_u32(np, "height-mm", &ctx->height);
+	if (ret < 0) {
+		dev_err(ctx->dev, "%pOF: invalid or missing %s DT property\n",
+			np, "height-mm");
+		return -ENODEV;
+	}
+
+	ret = of_property_read_string(np, "data-mapping", &mapping);
+	if (ret < 0) {
+		dev_err(ctx->dev, "%pOF: invalid or missing %s DT property\n",
+			np, "data-mapping");
+		return -ENODEV;
+	}
+
+	if (!strcmp(mapping, "jeida-18")) {
+		ctx->bus_format = MEDIA_BUS_FMT_RGB666_1X7X3_SPWG;
+	} else if (!strcmp(mapping, "jeida-24")) {
+		ctx->bus_format = MEDIA_BUS_FMT_RGB888_1X7X4_JEIDA;
+	} else if (!strcmp(mapping, "vesa-24")) {
+		ctx->bus_format = MEDIA_BUS_FMT_RGB888_1X7X4_SPWG;
+	} else {
+		dev_err(ctx->dev, "%pOF: invalid or missing %s DT property\n",
+			np, "data-mapping");
+		return -EINVAL;
+	}
+    return 0;
+}
+
+
+static int ili9806g_probe(struct i2c_client *client,const struct i2c_device_id *id)
+{
+	struct ili9806g *ctx;
+	int ret;
+
+	struct device *dev = &client->dev;
+	ctx = devm_kzalloc(dev, sizeof(*ctx), GFP_KERNEL);
+	if (!ctx)
+		return -ENOMEM;
+    //ctx->bus_format = MEDIA_BUS_FMT_RGB888_1X24;
+    ctx->bus_format = MEDIA_BUS_FMT_RGB888_1X7X4_SPWG;
+	drm_panel_init(&ctx->panel, dev, &ili9806g_drm_funcs,
+		       DRM_MODE_CONNECTOR_LVDS);
+    ctx->dev = dev;
+    ctx->client = client;
+	drm_panel_add(&ctx->panel);
+	
+		dev_err(dev, "detect the lt9211\n");
+	/*
+	 * Put the chip in reset, pull nRST line low,
+	 * and assure lengthy 10ms reset low timing.
+	 */
+
+    ret = panel_lvds_parse_dt(ctx);
+    if (ret < 0)
+        return ret;
+
+
+
+	ctx->reset_gpio = devm_gpiod_get_optional(ctx->dev, "reset",
+						  GPIOD_OUT_LOW);
+	if (IS_ERR(ctx->reset_gpio))
+		return PTR_ERR(ctx->reset_gpio);
+
+	usleep_range(10000, 11000);	/* Very long reset duration. */
+	ctx->regmap = devm_regmap_init_i2c(client, &lt9211_regmap_config);
+	if (IS_ERR(ctx->regmap))
+    {
+		dev_err(dev, "in lt9211_probe %d....\n",__LINE__);
+		return PTR_ERR(ctx->regmap);
+    }
+	dev_set_drvdata(dev, ctx);
+    i2c_set_clientdata(client, ctx);
+	
+/*
+    gpiod_set_value(ctx->reset_gpio, 1);
+	usleep_range(20000, 21000);	
+	lt9211_read_chipid(ctx);
+    */
+
+
+
+#if defined(CONFIG_AURALIC_LCD)
+	aura_lcd_init();
+	#endif
+    
+    lt9211_task = kthread_run(lt9211_task_fn, ctx, "lt9211_task");
+    if(IS_ERR(lt9211_task))
+    {
+        lt9211_task = NULL;
+        dev_err(dev,"auralic create lt9211 task thread failed!\n");
+        return -ENOMEM;
+    }
+
+	
+    return 0;
+}
+
+static int ili9806g_remove(struct i2c_client *client)
+{
+    if(NULL != lt9211_task)
+    {
+        kthread_stop(lt9211_task);
+        wake_up_process(lt9211_task);
+        lt9211_task = NULL;
+    }
+	struct ili9806g *ctx = i2c_get_clientdata(client);
+
+	ili9806g_display_off(ctx);
+	drm_panel_remove(&ctx->panel);
+	drm_panel_disable(&ctx->panel);
+	drm_panel_unprepare(&ctx->panel);
+    
+#if defined(CONFIG_AUALIC_LCD)
+    gpio_free(lcd_reset_pin);
+    gpio_free(spi_clk_pin);
+    gpio_free(spi_cs_pin);
+    gpio_free(spi_mosi_pin);
+    gpio_free(spi_miso_pin);
+    //remove_proc_entry(LCD_PROC_NAME, NULL);
+#endif
+	return 0;
+}
+
+
+static const struct of_device_id ili9806g_of_match[] = {
+	{ .compatible = "ili,ili9806g" },
+	{ }
+};
+MODULE_DEVICE_TABLE(of, ili9806g_of_match);
+
+static struct i2c_driver panel_ili9806g_driver = {
+	.driver = {
+		.name = "ili9806g-lcd",
+		.of_match_table = ili9806g_of_match,
+	},
+	.probe = ili9806g_probe,
+	.remove = ili9806g_remove,
+};
+module_i2c_driver(panel_ili9806g_driver);
+
+MODULE_AUTHOR("Heiko Schocher <hs@denx.de>");
+MODULE_DESCRIPTION("ili9806g LCD Driver");
+MODULE_LICENSE("GPL v2");

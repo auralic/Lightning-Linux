@@ -1,0 +1,647 @@
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * Copyright (C) 2015 Heiko Schocher <hs@denx.de>
+ *
+ * from:
+ * drivers/gpu/drm/panel/panel-ld9040.c
+ * ld9040 AMOLED LCD drm_panel driver.
+ *
+ * Copyright (c) 2014 Samsung Electronics Co., Ltd
+ * Derived from drivers/video/backlight/ld9040.c
+ *
+ * Andrzej Hajda <a.hajda@samsung.com>
+*/
+
+#include <linux/delay.h>
+#include <linux/gpio/consumer.h>
+#include <linux/module.h>
+#include <linux/of_platform.h>
+#include <linux/platform_device.h>
+#include <linux/regulator/consumer.h>
+#include <linux/media-bus-format.h>
+#include <linux/spi/spi.h>
+
+#include <video/mipi_display.h>
+#include <video/of_videomode.h>
+#include <video/videomode.h>
+
+#include <drm/drm_device.h>
+#include <drm/drm_modes.h>
+#include <drm/drm_panel.h>
+
+
+struct ili9806g {
+	struct drm_panel panel;
+	struct spi_device *spi;
+	struct videomode vm;
+	u32 bus_format;
+};
+
+static inline struct ili9806g *panel_to_ili9806g(struct drm_panel *panel)
+{
+	return container_of(panel, struct ili9806g, panel);
+}
+#define CONFIG_AURALIC_LCD		1
+#if defined(CONFIG_AURALIC_LCD)
+/* proc filesystem */
+#include <linux/proc_fs.h>
+#include <linux/fs.h>
+#include <linux/uio.h>
+#include <asm/uaccess.h>
+#include <linux/list.h>
+#include <linux/gpio.h>
+#include <linux/delay.h>
+#include <linux/mm.h>
+#include <linux/timer.h>
+#include <linux/kthread.h>
+#include <linux/cdev.h>  
+#include <linux/device.h> 
+#define	IONUMER(x, y)	((x-1)*32 + y)
+
+#define LCD_PROC_NAME       "lcd"
+#define	lcd_reset_pin		IONUMER(5, 24)//
+#define	spi_clk_pin			IONUMER(5, 6)
+#define	spi_cs_pin			IONUMER(5, 9)
+#define	spi_mosi_pin		IONUMER(5, 7)
+#define	spi_miso_pin		IONUMER(5, 8)
+
+#define lcd_reset(x)	\
+do \
+{ \
+	gpio_set_value(lcd_reset_pin, x); \
+}while(0)
+
+#define spi_cs(x)	\
+do \
+{ \
+	gpio_set_value(spi_cs_pin, x); \
+}while(0)
+
+#define spi_clk(x)	\
+do \
+{ \
+	gpio_set_value(spi_clk_pin, x); \
+	udelay(10); \
+}while(0)
+
+#define spi_mosi(x)	\
+do \
+{ \
+	gpio_set_value(spi_mosi_pin, x); \
+	udelay(10); \
+}while(0)
+
+#define spi_miso(x)	\
+do \
+{ \
+	gpio_set_value(spi_miso_pin, x); \
+}while(0)
+	
+void spi_cmd(u8 cmd)
+{
+	u8 i;
+	
+	//spi_cs(0);
+	spi_clk(0);
+	spi_mosi(0); //cmd
+	spi_clk(1);
+	
+	for(i=0;i<8;i++)
+	{
+		spi_clk(0);   
+		if(cmd&0x80)
+		{
+			spi_mosi(1);
+		}
+		else
+		{
+			spi_mosi(0);
+		}
+		spi_clk(1); 
+		cmd = cmd<<1;
+	}
+	//spi_cs(1);
+}
+
+void spi_data(u8 data)
+{
+	u8 i;
+	
+	//spi_cs(0);
+	spi_clk(0);
+	spi_mosi(1); //data
+	spi_clk(1);
+	
+	for(i=0;i<8;i++)
+	{
+		spi_clk(0);   
+		if(data&0x80)
+		{
+			spi_mosi(1);
+		}
+		else
+		{
+			spi_mosi(0);
+		}
+		spi_clk(1); 
+		data = data<<1;
+	}
+	//spi_cs(1);
+}
+
+void lcd_spi_init(void) 
+{  
+	//// Reset LCD Driver////
+	lcd_reset(1);
+	mdelay(110); // Delay 1ms
+	lcd_reset(0);
+	mdelay(150); // Delay 10ms // This Delay time is necessary
+	lcd_reset(1);
+	mdelay(100); // Delay 50 ms
+	spi_cs(0);
+	mdelay(1);
+
+	//************* Start Initial Sequence **********//
+	spi_cmd(0xFF); // EXTC Command Set enable register
+	spi_data(0xFF);
+	spi_data(0x98);
+	spi_data(0x06);
+
+	spi_cmd(0xBA); // SPI Interface Setting
+	spi_data(0x60);
+
+	spi_cmd(0xBC); // GIP 1
+	spi_data(0x01);
+	spi_data(0x0E);
+	spi_data(0x61);
+	spi_data(0xFB);
+	spi_data(0x10);
+	spi_data(0x10);
+	spi_data(0x0B);
+	spi_data(0x0F);
+	spi_data(0x2E);
+	spi_data(0x73);
+	spi_data(0xFF);
+	spi_data(0xFF);
+	spi_data(0x0E);
+	spi_data(0x0E);
+	spi_data(0x00);
+
+	spi_data(0x03);
+	spi_data(0x66);
+	spi_data(0x63);
+	spi_data(0x01);
+	spi_data(0x00);
+	spi_data(0x00);
+
+	spi_cmd(0xBD); // GIP 2
+	spi_data(0x01);
+	spi_data(0x23);
+	spi_data(0x45);
+	spi_data(0x67);
+	spi_data(0x01);
+	spi_data(0x23);
+	spi_data(0x45);
+	spi_data(0x67);
+	spi_cmd(0xBE); // GIP 3
+	spi_data(0x00);
+	spi_data(0x21);
+	spi_data(0xAB);
+	spi_data(0x60);
+	spi_data(0x22);
+	spi_data(0x22);
+	spi_data(0x22);
+	spi_data(0x22);
+	spi_data(0x22);
+	spi_cmd(0xC7); // Vcom
+	spi_data(0x47);
+
+	spi_cmd(0xED); // EN_volt_reg
+	spi_data(0x7F);
+	spi_data(0x0F);
+	spi_data(0x00);
+
+	spi_cmd(0xB6); // Display Function Control
+	spi_data(0x20);    //02
+
+	spi_cmd(0xC0); // Power Control 1
+	spi_data(0x37);
+	spi_data(0x0B);
+	spi_data(0x0A);
+	spi_cmd(0xFC); // LVGL
+	spi_data(0x0A);
+	spi_cmd(0xDF); // Engineering Setting
+	spi_data(0x00);
+	spi_data(0x00);
+	spi_data(0x00);
+	spi_data(0x00);
+	spi_data(0x00);
+	spi_data(0x20);
+	spi_cmd(0xF3); // DVDD Voltage Setting
+	spi_data(0x74);
+	spi_cmd(0xB4); // Display Inversion Control
+	spi_data(0x00);
+	spi_data(0x00);
+	spi_data(0x00);
+	spi_cmd(0xF7); // 480x800
+	spi_data(0x82);
+	spi_cmd(0xB1); // Frame Rate
+	spi_data(0x00);
+	spi_data(0x12);
+	spi_data(0x13);
+	spi_cmd(0xF2); // CR/EQ/PC
+	spi_data(0x80);
+	spi_data(0x5B);
+	spi_data(0x40);
+	spi_data(0x28);
+
+
+	spi_cmd(0xC1); // Power Control 2
+	spi_data(0x07);
+	spi_data(0x9F);
+	spi_data(0x71);
+	spi_data(0x20);
+	spi_cmd(0xE0); //Gamma
+	spi_data(0x00); //P1
+	spi_data(0x11); //P2
+	spi_data(0x18); //P3
+	spi_data(0x0C); //P4
+	spi_data(0x0F); //P5
+	spi_data(0x0D); //P6
+	spi_data(0x09); //P7
+	spi_data(0x08); //P8
+	spi_data(0x02); //P9
+	spi_data(0x06); //P10
+	spi_data(0x0F); //P11
+	spi_data(0x0E); //P12
+	spi_data(0x10); //P13
+	spi_data(0x18); //P14
+	spi_data(0x14); //P15
+	spi_data(0x00); //P16
+	spi_cmd(0xE1); //Gamma
+	spi_data(0x00); //P1
+	spi_data(0x05); //P2
+	spi_data(0x0D); //P3
+	spi_data(0x0B); //P4
+	spi_data(0x0D); //P5
+	spi_data(0x0B); //P6
+	spi_data(0x05); //P7
+	spi_data(0x03); //P8
+	spi_data(0x09); //P9
+	spi_data(0x0D); //P10
+	spi_data(0x0C); //P11
+	spi_data(0x10); //P12
+	spi_data(0x0B); //P13
+	spi_data(0x13); //P14
+
+
+	spi_data(0x09); //P15
+	spi_data(0x00); //P16
+	spi_cmd(0x35); //Tearing Effect ON
+	spi_data(0x00);
+
+
+	//spi_cmd(0x11); //Exit Sleep
+	//mdelay(120);
+	//spi_cmd(0x29); // Display On
+	//mdelay(120);
+	
+	spi_cs(1);
+}  
+
+void lcd_off (void)
+{
+	spi_cs(0);
+	spi_cmd(0x28); // Display off
+	mdelay(10);
+	spi_cmd(0x10); // Enter Standby mode
+	mdelay(120);
+	spi_cs(1);
+}
+
+void lcd_on(void)
+{
+	spi_cs(0);
+	spi_cmd(0x11); // Standby out
+	mdelay(120); 
+	spi_cmd(0x29); // Display on
+	spi_cs(1);
+}
+EXPORT_SYMBOL(lcd_on);
+
+ssize_t lcdproc_read(struct file *filp, char __user *usrbuf, size_t size, loff_t *offset)
+{
+	return 0;
+}
+
+static ssize_t lcdproc_write(struct file *filp, 
+				const char __user *usr_buf, size_t count, loff_t *f_pos)
+{
+	char len;
+	char cmd[100];
+    char buff[100] = {0};
+	int value, param_cnt;
+
+    len = count < 100 ? count : 99;
+    if(0 != copy_from_user(buff, usr_buf, len))
+    {
+        return count;
+    }
+    
+    buff[99] = '\0';
+
+	param_cnt = sscanf(buff, "%s %d", cmd, &value);
+	
+	if(0 == strncmp(cmd, "on", 2))
+    {
+		lcd_on();
+    }
+    else if(0 == strncmp(cmd, "off", 3))
+    {
+		lcd_off();
+    }
+	else
+	{
+		printk("wrong lcd command parameter\n");
+	}
+	
+    return count;
+}
+
+static const struct  proc_ops lcdproc_op = {
+    .proc_read = lcdproc_read,
+    .proc_write = lcdproc_write,
+};
+
+int  aura_lcd_init(void)
+{    
+    printk("auralic lcd inited!\n");
+	
+	/* create proc file /proc/PROC_ISP_NAME */
+    if(NULL == proc_create(LCD_PROC_NAME, 0755, NULL, &lcdproc_op))   
+    {
+        printk("err: create /proc/%s failed!", LCD_PROC_NAME);
+        return 0;
+    }
+
+	if(0 > gpio_request(lcd_reset_pin, "lcd_reset_pin\n"))
+    {
+        printk("request lcd_reset_pin failed!\n");
+        return 0;
+    }
+
+	if(0 > gpio_request(spi_clk_pin, "spi_clk_pin\n"))
+    {
+        printk("request spi_clk_pin failed!\n");
+        return 0;
+    }
+
+	if(0 > gpio_request(spi_cs_pin, "spi_cs_pin\n"))
+    {
+        printk("request spi_cs_pin failed!\n");
+        return 0;
+    }
+
+	if(0 > gpio_request(spi_mosi_pin, "spi_mosi_pin\n"))
+    {
+        printk("request spi_mosi_pin failed!\n");
+        return 0;
+    }
+
+	if(0 > gpio_request(spi_miso_pin, "spi_miso_pin\n"))
+    {
+        printk("request spi_miso_pin failed!\n");
+        return 0;
+    }
+	
+	gpio_direction_output(lcd_reset_pin, 1);
+	gpio_direction_output(spi_clk_pin, 1);
+	gpio_direction_output(spi_cs_pin, 1);
+	gpio_direction_output(spi_mosi_pin, 1);
+	gpio_direction_output(spi_miso_pin, 1);
+
+	lcd_spi_init();
+
+	return 0;
+}
+#endif //CONFIG_AURALIC_LCD end
+
+static int ili9806g_display_on(struct ili9806g *ctx)
+{
+    lcd_on();
+    return 0;
+}
+
+static int ili9806g_display_off(struct ili9806g *ctx)
+{
+    lcd_off();
+    return 0;
+}
+static int ili9806g_init(struct ili9806g *ctx)
+{
+    lcd_spi_init();
+    return 0;
+}
+
+static int ili9806g_power_on(struct ili9806g *ctx)
+{
+	dev_err(ctx->panel.dev, "LCD power on\n");
+	return ili9806g_display_on(ctx);
+}
+
+static int ili9806g_disable(struct drm_panel *panel)
+{
+	struct ili9806g *ctx = panel_to_ili9806g(panel);
+	dev_err(ctx->panel.dev, "LCD disabled....\n");
+
+	return ili9806g_display_off(ctx);
+}
+
+static int ili9806g_enable(struct drm_panel *panel)
+{
+	struct ili9806g *ctx = panel_to_ili9806g(panel);
+	dev_err(ctx->panel.dev, "LCD enabled...\n");
+
+	ili9806g_init(ctx);
+
+	return ili9806g_power_on(ctx);
+}
+static int ili9806g_prepare(struct drm_panel *panel)
+{
+	struct ili9806g *ctx = panel_to_ili9806g(panel);
+	dev_err(ctx->panel.dev, "LCD prepared...\n");
+
+    lcd_spi_init();
+
+	return 0;
+}
+static int ili9806g_unprepare(struct drm_panel *panel)
+{
+	struct ili9806g *ctx = panel_to_ili9806g(panel);
+    /*
+    struct ili9806g_msg msg = {
+        .len = 1,
+        .msg = {0x10}
+    };
+    */
+	dev_err(ctx->panel.dev, "LCD unprepared\n");
+    lcd_off();
+	return 0;
+}
+
+static const struct drm_display_mode ili9806e_480x800_mode = {
+	.clock = 32000,
+	.hdisplay = 480,
+	.hsync_start = 480 + 10,
+	.hsync_end = 480 + 10 + 16,
+	.htotal = 480 + 10 + 16 + 59,
+	.vdisplay = 800,
+	.vsync_start = 800 + 15,
+	.vsync_end = 800 + 15 + 113,
+	.vtotal = 800 + 15 + 113 + 15,
+	.flags = DRM_MODE_FLAG_NHSYNC | DRM_MODE_FLAG_NVSYNC,
+};
+
+static int ili9806g_get_modes(struct drm_panel *panel,
+			    struct drm_connector *connector)
+{
+	struct ili9806g *ctx = panel_to_ili9806g(panel);
+	struct drm_display_mode *mode;
+    
+	mode = drm_mode_duplicate(connector->dev, &ili9806e_480x800_mode);
+	if (!mode) {
+		dev_err(panel->dev, "failed to add mode %ux%ux@%u\n",
+			ili9806e_480x800_mode, ili9806e_480x800_mode.vdisplay,
+			drm_mode_vrefresh(&ili9806e_480x800_mode));
+		return -ENOMEM;
+	}
+	dev_err(panel->dev, "add mode %ux%ux@%u\n",
+		ili9806e_480x800_mode.hdisplay, ili9806e_480x800_mode.vdisplay,
+		drm_mode_vrefresh(&ili9806e_480x800_mode));
+
+	drm_mode_set_name(mode);
+
+	mode->type = DRM_MODE_TYPE_DRIVER | DRM_MODE_TYPE_PREFERRED;
+	mode->width_mm = 61;
+    mode->height_mm = 103;
+    drm_mode_probed_add(connector, mode);
+
+	connector->display_info.width_mm = 61;
+	connector->display_info.height_mm = 103;
+	
+    drm_display_info_set_bus_formats(&connector->display_info,
+					 &ctx->bus_format, 1);
+	connector->display_info.bus_flags =
+					DRM_BUS_FLAG_PIXDATA_DRIVE_NEGEDGE;
+
+	return 1;
+}
+static int panel_simple_get_timings(struct drm_panel *panel,
+				    unsigned int num_timings,
+				    struct display_timing *timings)
+{
+    printk(KERN_ERR "panel simple get timings....\n");
+    return 1;
+}
+
+static const struct drm_panel_funcs ili9806g_drm_funcs = {
+	.disable = ili9806g_disable,
+	.enable = ili9806g_enable,
+	.get_modes = ili9806g_get_modes,
+	.prepare	= ili9806g_prepare,
+	.unprepare	= ili9806g_unprepare,
+	//.get_timings = panel_simple_get_timings,
+};
+
+static int ili9806g_probe(struct platform_device *pdev)
+{
+	struct ili9806g *ctx;
+	int ret;
+
+	ctx = devm_kzalloc(&pdev->dev, sizeof(*ctx), GFP_KERNEL);
+	if (!ctx)
+		return -ENOMEM;
+    ctx->bus_format = MEDIA_BUS_FMT_RGB888_1X24;
+
+	drm_panel_init(&ctx->panel, &pdev->dev, &ili9806g_drm_funcs,
+		       DRM_MODE_CONNECTOR_LVDS);
+
+	drm_panel_add(&ctx->panel);
+	
+    #if defined(CONFIG_AURALIC_LCD)
+	aura_lcd_init();
+	#endif
+
+    //ili9806g_enable(&ctx->panel);
+/*
+	ret = ili9806g_write_msg_list(ctx, panel_init, NUM_INIT_REGS);
+    msleep(120);
+    ili9806g_display_off(ctx);
+    
+    //ili9806g_read_reg(ctx,0x04);
+    ssize_t aa = spi_w8r16(spi,0x0C);
+    printk(KERN_ERR "value is:%d\n",(s16)le16_to_cpu(aa));
+*/
+    return 0;
+}
+
+static int ili9806g_remove(struct platform_device *pdev)
+{
+	struct ili9806g *ctx = dev_get_drvdata(&pdev->dev) ;
+
+	ili9806g_display_off(ctx);
+	drm_panel_remove(&ctx->panel);
+	drm_panel_disable(&ctx->panel);
+	drm_panel_unprepare(&ctx->panel);
+    
+#if defined(CONFIG_AUALIC_LCD)
+    gpio_free(lcd_reset_pin);
+    gpio_free(spi_clk_pin);
+    gpio_free(spi_cs_pin);
+    gpio_free(spi_mosi_pin);
+    gpio_free(spi_miso_pin);
+    remove_proc_entry(LCD_PROC_NAME, NULL);
+#endif
+	return 0;
+}
+
+
+static const struct of_device_id ili9806g_of_match[] = {
+	{ .compatible = "ili,ili9806g" },
+	{ }
+};
+MODULE_DEVICE_TABLE(of, ili9806g_of_match);
+
+static struct platform_driver panel_ili9806g_driver = {
+	.driver = {
+		.name = "ili9806g-lcd",
+		.of_match_table = ili9806g_of_match,
+	},
+	.probe = ili9806g_probe,
+	.remove = ili9806g_remove,
+};
+
+static int __init panel_ili9806g_init(void)
+{
+	int err;
+
+	err = platform_driver_register(&panel_ili9806g_driver);
+	if (err < 0)
+		return err;
+
+
+	return 0;
+
+
+}
+module_init(panel_ili9806g_init);
+
+static void __exit panel_ili9806g_exit(void)
+{
+	platform_driver_unregister(&panel_ili9806g_driver);
+}
+module_exit(panel_ili9806g_exit);
+
+MODULE_AUTHOR("Heiko Schocher <hs@denx.de>");
+MODULE_DESCRIPTION("ili9806g LCD Driver");
+MODULE_LICENSE("GPL v2");

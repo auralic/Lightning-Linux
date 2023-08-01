@@ -1,0 +1,598 @@
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * Copyright (C) 2015 Heiko Schocher <hs@denx.de>
+ *
+ * from:
+ * drivers/gpu/drm/panel/panel-ld9040.c
+ * ld9040 AMOLED LCD drm_panel driver.
+ *
+ * Copyright (c) 2014 Samsung Electronics Co., Ltd
+ * Derived from drivers/video/backlight/ld9040.c
+ *
+ * Andrzej Hajda <a.hajda@samsung.com>
+*/
+
+#include <linux/delay.h>
+#include <linux/gpio/consumer.h>
+#include <linux/module.h>
+#include <linux/regulator/consumer.h>
+#include <linux/media-bus-format.h>
+#include <linux/spi/spi.h>
+
+#include <video/mipi_display.h>
+#include <video/of_videomode.h>
+#include <video/videomode.h>
+
+#include <drm/drm_device.h>
+#include <drm/drm_modes.h>
+#include <drm/drm_panel.h>
+
+struct ili9806g {
+	struct drm_panel panel;
+	struct spi_device *spi;
+	struct videomode vm;
+	u32 bus_format;
+};
+
+#define ILI9806_DATA		BIT(8)
+#define ILI9806_MAX_MSG_LEN	22
+struct ili9806g_msg {
+	unsigned int len;
+	u16 msg[ILI9806_MAX_MSG_LEN];
+};
+
+static const struct ili9806g_msg panel_init[] = {
+    {
+        .len = 4,
+        .msg = {0xFF,0xFF,0x98,0x06},
+    },
+    {
+        .len = 2,
+        .msg = {0xBA,0x60},
+    },
+    {
+        .len = 22,
+        .msg = {0xBC,0x01,0x0E,0x61,0xFB,0x10,0x10,0x0B,0x0F,0x2E,0x73,0xFF,0xFF,0x0E,0x0E,0x00,0x03,0x66,0x63,0x01,0x00,0x00},
+    },
+    {
+        .len = 9,
+        .msg = {0xBD,0x01,0x23,0x45,0x67,0x01,0x23,0x45,0x67},
+    },
+    {
+        .len = 10,
+        .msg = {0xBE,0x00,0x21,0xAB,0x60,0x22,0x22,0x22,0x22,0x22},
+    },
+    {
+        .len = 2,
+        .msg = {0xC7,0x47},
+    },
+    {
+        .len = 4,
+        .msg = {0xED,0x7F,0x0F,0x00},
+    },
+    {
+        .len = 2,
+        .msg = {0xB6,0x20},
+    },
+    {
+        .len = 4,
+        .msg = {0xC0,0x37,0x0B,0x0A},
+    },
+    {
+        .len = 2,
+        .msg = {0xFC,0x0A},
+    },
+    {
+        .len = 7,
+        .msg = {0xDF,0x00,0x00,0x00,0x00,0x00,0x20}
+    },
+    {
+        .len = 2,
+        .msg = {0xF3,0x74},
+    },
+    {
+        .len = 4,
+        .msg = {0xB4,0x00,0x00,0x00},
+    },
+    {
+        .len = 2,
+        .msg = {0xF7,0x82},
+    },
+    {
+        .len = 4,
+        .msg = {0xB1,0x00,0x12,0x13},
+    },
+    {
+        .len = 5,
+        .msg = {0xF2,0x80,0x5B,0x40,0x28},
+    },
+    {
+        .len = 5,
+        .msg = {0xC1,0x07,0x9F,0x71,0x20},
+    },
+    {
+        .len = 17,
+        .msg = {0xE0,0x00,0x11,0x18,0x0C,0x0F,0x0D,0x09,0x08,0x02,0x06,0x0F,0x0E,0x10,0x18,0x14,0x00},
+    },
+    {
+        .len = 17,
+        .msg = {0xE1,0x00,0x05,0x0D,0x0B,0x0D,0x0B,0x05,0x03,0x09,0x0D,0x0C,0x10,0x0B,0x13,0x09,0x00},
+    },
+    {
+        .len = 2,
+        .msg = {0x35,0x00},
+    },
+    
+};
+
+#define NUM_INIT_REGS ARRAY_SIZE(panel_init)
+static inline struct ili9806g *panel_to_ili9806g(struct drm_panel *panel)
+{
+	return container_of(panel, struct ili9806g, panel);
+}
+/*
+static int ili9806g_spi_write_u16_array(struct ili9806g *ctx, const u16 *buffer,
+				      unsigned int count)
+{
+	return 0;
+}
+
+static int ili9806g_spi_write_dcs(struct ili9806g *ctx, u8 dcs)
+{
+	//return ili9806g_spi_write_u16(ctx, (0x70 << 8 | dcs));
+    return 1;
+}
+*/
+static u8 ili9806g_read_reg(struct ili9806g *ctx, u8 address)
+{
+	struct spi_message m;
+	struct spi_transfer t[2];
+	u8 buf[4];
+	int ret;
+
+	spi_message_init(&m);
+	memset(t, 0, sizeof(t));
+	
+		buf[0] = address;// << 1;
+		//buf[0] |= 0x01;
+
+		/*
+		 * The last bit/clock is Hi-Z turnaround cycle, so we need
+		 * to send only 7 bits here. The 8th bit is the high impedance
+		 * turn-around cycle.
+		 */
+		t[0].bits_per_word = 8;
+		t[0].tx_buf = &buf[0];
+		t[0].len = 1;
+
+		t[1].rx_buf = &buf[1];
+		t[1].len = 3;
+		t[1].bits_per_word = 8;
+
+
+	spi_message_add_tail(&t[0], &m);
+	spi_message_add_tail(&t[1], &m);
+	ret = spi_sync(ctx->spi, &m);
+	if (ret) {
+		dev_err(ctx->panel.dev, "SPI message error %d\n", ret);
+		return ret;
+	}
+	/* Read */
+		dev_err(ctx->panel.dev, "read value %d===%d==%d\n", buf[1],buf[2],buf[3]);
+	return buf[1];
+/*
+    struct spi_transfer xfer = { };
+	struct spi_message spi;
+	//u16 txbuf[] = { msg->, ILI9806_DATA | data };
+    int ret;
+	spi_message_init(&spi);
+
+	xfer.tx_buf = msg->msg;
+	xfer.bits_per_word = 9;
+	xfer.len = sizeof(u16) * msg->len;
+
+	spi_message_add_tail(&xfer, &spi);
+	ret = spi_sync(ctx->spi, &spi);
+    
+    if(ret != 0)
+    {
+        printk(KERN_ERR "send error...\n");
+    }
+    else
+    {
+        printk(KERN_ERR "send success...\n");
+    }
+   
+    return ret;
+    */
+}
+static int ili9806g_write_msg(struct ili9806g *ctx, const struct ili9806g_msg *msg)
+{
+	struct spi_transfer xfer = { };
+	struct spi_message spi;
+	//u16 txbuf[] = { msg->, ILI9806_DATA | data };
+    u16 txbuf = ((0 & 1) << 8) | msg->msg[0];
+    int ret;
+	spi_message_init(&spi);
+
+	xfer.tx_buf = txbuf;
+	xfer.bits_per_word = 9;
+	xfer.len = sizeof(txbuf);//sizeof(u16) * msg->len;
+    
+	spi_message_add_tail(&xfer, &spi);
+	ret = spi_sync(ctx->spi, &spi);
+   
+    if(ret != 0)
+    {
+        printk(KERN_ERR "send error...\n");
+    }
+    else
+    {
+        printk(KERN_ERR "send success...0x%x\n",txbuf);
+    }
+   
+    return ret;
+}
+
+static int ili9806g_write_msg_list(struct ili9806g *ctx,
+				   const struct ili9806g_msg msgs[],
+				   unsigned int num_msgs)
+{
+	int ret, i;
+
+	for (i = 0; i < num_msgs; i++) {
+		ret = ili9806g_write_msg(ctx, &msgs[i]);
+		if (ret)
+			break;
+	}
+
+	return ret;
+}
+
+enum st7789v_prefix {
+	ST7789V_COMMAND = 0,
+	ST7789V_DATA = 1,
+};
+
+static int st7789v_spi_write(struct ili9806g *ctx, enum st7789v_prefix prefix,
+			     u8 data)
+{
+	struct spi_transfer xfer = { };
+	struct spi_message msg;
+	u16 txbuf = ((prefix & 1) << 8) | data;
+
+	spi_message_init(&msg);
+
+	xfer.tx_buf = &txbuf;
+	xfer.bits_per_word = 9;
+	xfer.len = sizeof(txbuf);
+    xfer.speed_hz = 1000;
+
+	spi_message_add_tail(&xfer, &msg);
+	return spi_sync(ctx->spi, &msg);
+}
+
+static int st7789v_write_command(struct ili9806g *ctx, u8 cmd)
+{
+	return st7789v_spi_write(ctx, ST7789V_COMMAND, cmd);
+}
+static int ili9806g_display_on(struct ili9806g *ctx)
+{
+	int ret;
+    struct ili9806g_msg msg = {
+        .len = 1,
+        .msg = {0x11}
+    };
+	dev_err(ctx->panel.dev, "LCD power on\n");
+	//ret = ili9806g_write_msg(ctx,&msg);
+    ret = st7789v_write_command(ctx,0x11);
+    if (ret)
+		return ret;
+
+	msleep(120);
+    {
+    struct ili9806g_msg msg = {
+        .len = 1,
+        .msg = {0x29}
+    };
+    //return ili9806g_write_msg(ctx,&msg); 
+    return st7789v_write_command(ctx,0x29);
+    }
+}
+
+static int ili9806g_display_off(struct ili9806g *ctx)
+{
+	int ret;
+    return 0;
+    struct ili9806g_msg msg = {
+        .len = 1,
+        .msg = {0x28}
+    };
+	ret = ili9806g_write_msg(ctx,&msg);
+    if (ret)
+		return ret;
+
+	msleep(10);
+    {
+    struct ili9806g_msg msg = {
+        .len = 1,
+        .msg = {0x10}
+    };
+    return ili9806g_write_msg(ctx,&msg); 
+    }
+}
+/*
+static int ili9806g_display_mode_settings(struct ili9806g *ctx)
+{
+	static const u16 display_mode_settings[] = {
+		0x703A, 0x7270, 0x70B1, 0x7208,
+		0x723B, 0x720F, 0x70B2, 0x7200,
+		0x72C8, 0x70B3, 0x7200, 0x70B4,
+		0x7200, 0x70B5, 0x7242, 0x7210,
+		0x7210, 0x7200, 0x7220, 0x70B6,
+		0x720B, 0x720F, 0x723C, 0x7213,
+		0x7213, 0x72E8, 0x70B7, 0x7246,
+		0x7206, 0x720C, 0x7200, 0x7200,
+	};
+
+	dev_dbg(ctx->panel.dev, "transfer display mode settings\n");
+	
+    return ili9806g_spi_write_u16_array(ctx, display_mode_settings,
+					  ARRAY_SIZE(display_mode_settings));
+    
+}
+
+static int ili9806g_power_settings(struct ili9806g *ctx)
+{
+	static const u16 power_settings[] = {
+		0x70C0, 0x7201, 0x7211, 0x70C3,
+		0x7207, 0x7203, 0x7204, 0x7204,
+		0x7204, 0x70C4, 0x7212, 0x7224,
+		0x7218, 0x7218, 0x7202, 0x7249,
+		0x70C5, 0x726F, 0x70C6, 0x7241,
+		0x7263,
+	};
+
+	dev_dbg(ctx->panel.dev, "transfer power settings\n");
+	return ili9806g_spi_write_u16_array(ctx, power_settings,
+					  ARRAY_SIZE(power_settings));
+}
+
+static int ili9806g_gamma_settings(struct ili9806g *ctx)
+{
+	static const u16 gamma_settings[] = {
+		0x70D0, 0x7203, 0x7207, 0x7273,
+		0x7235, 0x7200, 0x7201, 0x7220,
+		0x7200, 0x7203, 0x70D1, 0x7203,
+		0x7207, 0x7273, 0x7235, 0x7200,
+		0x7201, 0x7220, 0x7200, 0x7203,
+		0x70D2, 0x7203, 0x7207, 0x7273,
+		0x7235, 0x7200, 0x7201, 0x7220,
+		0x7200, 0x7203, 0x70D3, 0x7203,
+		0x7207, 0x7273, 0x7235, 0x7200,
+		0x7201, 0x7220, 0x7200, 0x7203,
+		0x70D4, 0x7203, 0x7207, 0x7273,
+		0x7235, 0x7200, 0x7201, 0x7220,
+		0x7200, 0x7203, 0x70D5, 0x7203,
+		0x7207, 0x7273, 0x7235, 0x7200,
+		0x7201, 0x7220, 0x7200, 0x7203,
+	};
+
+	dev_dbg(ctx->panel.dev, "transfer gamma settings\n");
+	return ili9806g_spi_write_u16_array(ctx, gamma_settings,
+					  ARRAY_SIZE(gamma_settings));
+}
+*/
+static int ili9806g_init(struct ili9806g *ctx)
+{
+	int ret;
+
+	dev_err(ctx->panel.dev, "initializing LCD\n");
+
+   return 0; 
+	return ili9806g_write_msg_list(ctx, panel_init, NUM_INIT_REGS);
+}
+
+static int ili9806g_power_on(struct ili9806g *ctx)
+{
+	dev_err(ctx->panel.dev, "LCD power on\n");
+	return 0;
+    return ili9806g_display_on(ctx);
+}
+
+static int ili9806g_disable(struct drm_panel *panel)
+{
+	struct ili9806g *ctx = panel_to_ili9806g(panel);
+	dev_err(ctx->panel.dev, "LCD disabled....\n");
+    return 0;
+	return ili9806g_display_off(ctx);
+}
+
+static int ili9806g_enable(struct drm_panel *panel)
+{
+	struct ili9806g *ctx = panel_to_ili9806g(panel);
+	dev_err(ctx->panel.dev, "LCD enabled...\n");
+    return 0;
+	ili9806g_init(ctx);
+
+	return ili9806g_power_on(ctx);
+}
+static int ili9806g_prepare(struct drm_panel *panel)
+{
+	struct ili9806g *ctx = panel_to_ili9806g(panel);
+	int ret;
+	dev_err(ctx->panel.dev, "LCD prepared...\n");
+	/*
+    u8 data = 0x11;
+    u8 data1 = 0x29;
+	ret = spi_write(ctx->spi, &data, sizeof(data));
+    msleep(120);
+    ret = spi_write(ctx->spi,&data1,sizeof(data1));
+    if(ret)
+        dev_err(ctx->panel.dev,"write err....%d\n",ret);
+    */
+    ret = ili9806g_display_on(ctx);
+    if(ret)
+        dev_err(ctx->panel.dev,"write err....%d\n",ret);
+
+
+	//ret = ili9806g_write_msg_list(ctx, panel_init, NUM_INIT_REGS);
+
+	return ret;
+}
+static int ili9806g_unprepare(struct drm_panel *panel)
+{
+	struct ili9806g *ctx = panel_to_ili9806g(panel);
+	int ret;
+    struct ili9806g_msg msg = {
+        .len = 1,
+        .msg = {0x10}
+    };
+	dev_err(ctx->panel.dev, "LCD unprepared\n");
+	return 0;
+    ret = ili9806g_write_msg(ctx,&msg);
+
+	return ret;
+}
+
+static const struct drm_display_mode ili9806e_480x800_mode = {
+	.clock = 32000,
+	.hdisplay = 480,
+	.hsync_start = 480 + 10,
+	.hsync_end = 480 + 10 + 16,
+	.htotal = 480 + 10 + 16 + 59,
+	.vdisplay = 800,
+	.vsync_start = 800 + 15,
+	.vsync_end = 800 + 15 + 113,
+	.vtotal = 800 + 15 + 113 + 15,
+	.flags = DRM_MODE_FLAG_NHSYNC | DRM_MODE_FLAG_NVSYNC,
+};
+
+static int ili9806g_get_modes(struct drm_panel *panel,
+			    struct drm_connector *connector)
+{
+	struct ili9806g *ctx = panel_to_ili9806g(panel);
+	struct drm_display_mode *mode;
+    
+	mode = drm_mode_duplicate(connector->dev, &ili9806e_480x800_mode);
+	if (!mode) {
+		dev_err(panel->dev, "failed to add mode %ux%ux@%u\n",
+			ili9806e_480x800_mode, ili9806e_480x800_mode.vdisplay,
+			drm_mode_vrefresh(&ili9806e_480x800_mode));
+		return -ENOMEM;
+	}
+	dev_err(panel->dev, "add mode %ux%ux@%u\n",
+		ili9806e_480x800_mode.hdisplay, ili9806e_480x800_mode.vdisplay,
+		drm_mode_vrefresh(&ili9806e_480x800_mode));
+
+	drm_mode_set_name(mode);
+
+	mode->type = DRM_MODE_TYPE_DRIVER | DRM_MODE_TYPE_PREFERRED;
+	drm_mode_probed_add(connector, mode);
+
+	connector->display_info.width_mm = 61;
+	connector->display_info.height_mm = 103;
+	
+    drm_display_info_set_bus_formats(&connector->display_info,
+					 &ctx->bus_format, 1);
+	connector->display_info.bus_flags =
+					DRM_BUS_FLAG_PIXDATA_DRIVE_NEGEDGE;
+
+	return 1;
+}
+
+static const struct drm_panel_funcs ili9806g_drm_funcs = {
+	.disable = ili9806g_disable,
+	.enable = ili9806g_enable,
+	.get_modes = ili9806g_get_modes,
+	.prepare	= ili9806g_prepare,
+	.unprepare	= ili9806g_unprepare,
+};
+
+static int ili9806g_probe(struct spi_device *spi)
+{
+	struct ili9806g *ctx;
+	int ret;
+
+	//	dev_err(&spi->dev, "SPI setup failed: %d\n", ret);
+	ctx = devm_kzalloc(&spi->dev, sizeof(*ctx), GFP_KERNEL);
+	if (!ctx)
+		return -ENOMEM;
+    ctx->bus_format = MEDIA_BUS_FMT_RGB888_1X24;
+	ctx->spi = spi;
+
+	spi_set_drvdata(spi, ctx);
+	spi->bits_per_word = 9;
+
+	ret = spi_setup(spi);
+	if (ret < 0) {
+		dev_err(&spi->dev, "SPI setup failed: %d\n", ret);
+		return ret;
+	}
+    //dev_err(&spi->dev,"ili9806g probed....\n");
+	drm_panel_init(&ctx->panel, &spi->dev, &ili9806g_drm_funcs,
+		       DRM_MODE_CONNECTOR_DPI);
+
+	drm_panel_add(&ctx->panel);
+/*
+	u16 data = 0x11|0x00<<8;
+    u16 data1 = 0x29|0x00<<8;
+	ret = spi_write(spi, &data, sizeof(data));
+    msleep(120);
+    ret = spi_write(spi,data1,sizeof(data1));
+    if(ret)
+        dev_err(&spi->dev,"write err....\n");
+  */      
+ili9806g_display_on(ctx);
+    
+
+//ili9806g_enable(&ctx->panel);
+/*
+	ret = ili9806g_write_msg_list(ctx, panel_init, NUM_INIT_REGS);
+    msleep(120);
+    ili9806g_display_off(ctx);
+    
+    //ili9806g_read_reg(ctx,0x04);
+    ssize_t aa = spi_w8r16(spi,0x0C);
+    printk(KERN_ERR "value is:%d\n",(s16)le16_to_cpu(aa));
+*/
+    return 0;
+}
+
+static int ili9806g_remove(struct spi_device *spi)
+{
+	struct ili9806g *ctx = spi_get_drvdata(spi);
+
+	ili9806g_display_off(ctx);
+	drm_panel_remove(&ctx->panel);
+
+	return 0;
+}
+static const struct spi_device_id ili9806g_spi_ids[] = {
+	{ .name = "ili9806g" },
+	{},
+};
+MODULE_DEVICE_TABLE(spi, ili9806g_spi_ids);
+
+
+static const struct of_device_id ili9806g_of_match[] = {
+	{ .compatible = "ili,ili9806g" },
+	{ }
+};
+MODULE_DEVICE_TABLE(of, ili9806g_of_match);
+
+static struct spi_driver ili9806g_driver = {
+	.probe = ili9806g_probe,
+	.remove = ili9806g_remove,
+	.driver = {
+		.name = "ili9806g-lcd",
+		.of_match_table = ili9806g_of_match,
+	},
+    .id_table = ili9806g_spi_ids,
+};
+module_spi_driver(ili9806g_driver);
+
+
+MODULE_AUTHOR("Heiko Schocher <hs@denx.de>");
+MODULE_DESCRIPTION("ili9806g LCD Driver");
+MODULE_LICENSE("GPL v2");

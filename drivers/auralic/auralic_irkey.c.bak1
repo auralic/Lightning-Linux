@@ -1,0 +1,2152 @@
+/*
+ * Driver for EETI eGalax Multiple Touch Controller
+ *
+ * Copyright (C) 2011-2013 Freescale Semiconductor, Inc.
+ *
+ * based on max11801_ts.c
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
+ */
+
+/* EETI eGalax serial touch screen controller is a I2C based multiple
+ * touch screen controller, it supports 5 point multiple touch. */
+
+/* TODO:
+  - auto idle mode support
+*/
+#include <linux/module.h>
+#include <linux/init.h>
+#include <linux/i2c.h>
+#include <linux/interrupt.h>
+#include <linux/input.h>
+#include <linux/irq.h>
+#include <linux/gpio.h>
+#include <linux/delay.h>
+#include <linux/slab.h>
+#include <linux/bitops.h>
+#include <linux/input/mt.h>
+#include <linux/of_gpio.h>
+#include <linux/kthread.h>
+
+/* proc filesystem */
+#include <linux/proc_fs.h>
+#include <linux/fs.h>
+#include <linux/uio.h>
+#include <linux/uaccess.h>
+#include <linux/list.h>
+#include <linux/gpio.h>
+#include <linux/mutex.h>
+#include <linux/delay.h>
+#include <linux/mm.h>
+#include <linux/hrtimer.h> 
+#include <linux/cdev.h> 
+
+#include "auralic_irkey.h"
+
+#define	IR_PROC_NAME		"irkey"
+#define	IR_DEV_NAME			"irkey"
+
+#define IR_PIN  			(0*32 + 0)
+#define PLUG_FROM_LLINK_DOWN_PIN  			(3*32 + 12)//input 
+#define READY_TO_LLINK_DOWN_PIN  			(3*32 + 14)//output 
+
+bool is_plug_llink_down = false;
+wait_queue_head_t linkwq;
+
+#define IRKEY_INTERRUPT_KEYS  0
+#if !(IRKEY_INTERRUPT_KEYS)
+int polling_delay_ms = 10;
+#endif
+
+
+#define	IR_KEYS_START_VAL	1
+#define IR_KEYS_END_VALUE	KEY_CNT
+#define	IR_KEYS_COUNT		200 //keys buff
+#define	IR_KEYS_EXTRA		10  //extra keys buff
+#define	IR_LEARN_COUNT		8   //learn buff
+#define	IR_FRAME_LEN_MAX	200
+
+/* epit timer */
+#define	EPPHYADDR			0x20d4000
+#define	EPPHYLEN			0x20
+#define EPITCR				0
+#define EPITSR				1
+#define EPITLR				2
+#define EPITCMPR			3
+#define EPITCNR				4
+
+#define	IR_PULSE_DIVID		6 //    1/6==16.7%
+#define	IR_FM_TIME_MS		38 //ms
+#define	IR_MATCH_NOR_LEVEL	2  // for learn normal click key
+#define	IR_MATCH_PRESS_LEVEL (IR_MATCH_NOR_LEVEL+1)  // for learn long press key
+#define	HAS_LEARNED			1
+#define	NOT_LEARNED			0
+#define	IR_ERROR_LEVEL		30 //max errors frame for one key
+
+#define	IRKEYS_PATH			"/auralic/irkey"
+#define	IR_TXT_FILE_SIZE	(4096*4) //16KB
+#define	IR_TXT_FORMATE		"i=%d, pin=%d, width=%d\n"
+
+#define	IR_INVALID_KEY		IR_KEYS_END_VALUE
+
+void __iomem *epbase = NULL;
+unsigned	*irbase = NULL;
+
+bool isbusy = false;
+struct hrtimer irtimer;
+ktime_t kt;
+
+int ir_fm_time_ms = IR_FM_TIME_MS;
+int ir_pulse_divid = IR_PULSE_DIVID;
+
+struct kmem_cache *ircachep = NULL;  
+
+int irkey_learn; //the key value for learn
+int idx_learn = 0;
+int cur_learn = 0;
+int idx_recv  = 0;
+int irkey_recv = IR_INVALID_KEY; //the key value receive from ir
+bool islearn = false;  
+int learn_ret = -EINVAL; 
+int ir_match_level = IR_MATCH_NOR_LEVEL;
+wait_queue_head_t irwq;
+
+enum print_level_ {
+    IRNOR = 0,
+    IRDBG = 1,
+    IR_BUT,
+};
+
+bool irprint_level = false;
+
+#define irprint(level, format, args...)   \
+do  \
+{   \
+    if(true == irprint_level) \
+    { \
+        printk(format, ##args); \
+    } \
+    else if(level == IRNOR) \
+    { \
+        printk(format, ##args); \
+    } \
+}   \
+while(0)
+
+static char *helpstring = "echo dgbon    > /proc/irkey --> enable debug print\n"
+                   "echo save     > /proc/irkey --> save keys to /auralic/irkey/\n"
+                   "echo dbgoff   > /proc/irkey --> disable debug print\n"
+                   "echo cleanall > /proc/irkey --> clean all exsit keys\n"
+                   "echo learn x  > /proc/irkey --> start learn for key x, 0< x <255\n"
+                   "echo press x  > /proc/irkey --> start learn long press for key x, 0< x <255\n"
+                   "echo divid x  > /proc/irkey --> set the pulse noise range as +/- 1/x\n"
+                   "echo clean x  > /proc/irkey --> clean key x, 0< x <255\n"
+                   "echo fmtime x > /proc/irkey --> set the frame timeout as x ms\n"
+                   "echo /x/y.txt > /proc/irkey --> learn key from file /x/y.txt\n"
+                   "echo /x/y.hex > /proc/irkey --> learn key from file /x/y.hex\n"
+                   #if !(IRKEY_INTERRUPT_KEYS)
+                   "echo poll_delay x > /proc/irkey --> set keys polling interval time as x ms\n"
+                   #endif
+                   ;
+
+typedef struct _irdat
+{
+	char cfg; //learned flag
+	char cnt; //pulse count
+	int key; //key value
+	char pin[IR_FRAME_LEN_MAX];
+	uint64_t width[IR_FRAME_LEN_MAX];
+}irdat_t;
+
+irdat_t * irkeys = NULL;
+irdat_t * irkey_array[IR_KEYS_COUNT];
+irdat_t * irkey_extra[IR_KEYS_EXTRA];
+irdat_t * irlearns[IR_LEARN_COUNT];
+irdat_t * irbuff = NULL;
+irdat_t * irecv = NULL;
+
+enum 
+{
+	NEW,
+	PRESS,
+	RELEASE
+};
+
+typedef struct irkey_event {
+	int key;
+	char state;
+	unsigned long jiffies;
+}irkey_event_t;
+
+int duplex_key = 0;
+
+
+irkey_event_t irkey_event_key;
+
+#define IRKEY_REPORT_DELAY	200
+int irkey_report_delay_ms = IRKEY_REPORT_DELAY;
+static struct task_struct *irkeyreport_task = NULL;
+struct input_dev *aura_input_dev = NULL;
+
+/* char dev related */
+dev_t irdevno;
+struct class *irdev_class = NULL;
+typedef struct irdev_   
+{  
+    struct cdev cdev;  
+}irdev_t; 
+irdev_t irdev;
+atomic_t irdev_atomic_rd;
+wait_queue_head_t irdev_rdwq;
+
+uint64_t last_time;
+void ir_init_timer(void)
+{
+	//*(irbase+EPITCR) = 0;
+	//*(irbase+EPITCR) = 0x10a042a; 
+}
+
+void ir_start_timer(void)
+{
+	/* start cnt */
+	//*(irbase+EPITCR) = 0x10a042b; 
+	//*(irbase+EPITCR) = 0x10a042b; 
+    last_time = ktime_to_ns(ktime_get());
+}
+
+void ir_stop_timer(void)
+{
+	//*(irbase+EPITCR) = 0;
+	//*(irbase+EPITCR) = 0x10a042a;
+	//*(irbase+EPITCR) = 0x10a042a;
+}
+
+uint64_t ir_get_timer_cnr(void)
+{
+	/* clear overflow */
+	//*(irbase+EPITSR) = 1;
+	
+	//return *(irbase+EPITCNR);
+    uint64_t cur_time = ktime_to_ns(ktime_get());
+    return cur_time - last_time;
+}
+
+irqreturn_t ir_recv_interrupt_handler(int devid, void * data)
+{
+	ir_stop_timer();
+	
+	if((false == isbusy) && (0 == gpio_get_value(IR_PIN)))
+	{
+		/* start receive */
+		isbusy = true;
+		idx_recv = 0;
+	}
+	else
+	{
+		irecv->pin[idx_recv] = 1 - gpio_get_value(IR_PIN);
+		irecv->width[idx_recv] = ir_get_timer_cnr();
+		if(IR_FRAME_LEN_MAX > idx_recv)
+			idx_recv++;
+	}
+	
+	ir_start_timer();
+	
+    return IRQ_HANDLED;
+}
+
+void ir_copy_frame_to(irdat_t *src, irdat_t *dst, int cnt)
+{
+	int i;
+	for(i=0; i<cnt; i++)
+	{
+		if(ir_fm_time_ms < (src->width[i]/1000000)) // width is ns, need change to ms
+		{
+			/* timeout */
+			irprint(IRDBG, "time out split ir frame, width=%u us\n", src->width[i]);
+			break;
+		}
+		else
+		{
+			dst->pin[i] = src->pin[i];
+			dst->width[i] = src->width[i];
+		}
+	}
+	
+	dst->cnt = i;
+}
+
+void ir_updating_learn_buff(irdat_t *irbuff)
+{
+	int i;
+	
+	ir_copy_frame_to(irbuff, irlearns[idx_learn++], irbuff->cnt);
+	
+	if(IR_LEARN_COUNT <= idx_learn)
+		idx_learn = 0; // loop again
+		
+	if(IR_LEARN_COUNT <= cur_learn)
+	{
+		for(i=0; i<IR_LEARN_COUNT; i++)
+			irlearns[i]->cfg = NOT_LEARNED;// clear learned flag, so can learn again
+	}
+	else
+	{
+		cur_learn++;
+	}
+}
+
+void ir_init_extra_keys(void)
+{
+	irdat_t *buff = NULL;
+	
+	/* init apple key value */
+	buff = irkey_extra[0];
+	buff->cnt = 3;
+	
+	buff->pin[0] = 0;
+	buff->width[0] = 8890;
+	buff->pin[1] = 1;
+	buff->width[1] = 2190;
+	buff->pin[2] = 0;
+	buff->width[2] = 550;
+}
+
+void ir_print_frame(irdat_t *buff)
+{
+	int i;
+	for(i=0; i<buff->cnt; i++)
+	{
+		irprint(IRDBG, IR_TXT_FORMATE, i, buff->pin[i], buff->width[i]);
+	}	
+}
+
+irdat_t * ir_find_a_free_space(void)
+{
+	int i;
+	
+	for(i=0; i<IR_KEYS_COUNT; i++)
+	{
+		if(0 == irkey_array[i]->cnt)
+		{
+			irkey_array[i]->key = 0;
+			return irkey_array[i];
+		}
+	}
+
+	return NULL;
+}
+
+/* 
+errno:
+0    : means cnt is not match
+other: means the width of buff[other] is not match 
+*/
+bool ir_match_frame_for_one(irdat_t *irdat, irdat_t *buff, int *errno)
+{
+	int i;
+	bool ismatched = true;
+
+	*errno = 0; //cnt is not match
+	
+	/* match cnt 0 */
+	if((0 == irdat->cnt) || (0 == buff->cnt))
+	{
+		ismatched = false;
+		goto out;
+	}
+
+	/* match cnt */
+	if((irdat->cnt != buff->cnt))
+	{
+		ismatched = false;
+		if(false == islearn)
+		{
+			irprint(IRDBG, "auralic irkey matched one failed by pulse count!\n");
+		}
+		goto out;
+	}
+	
+	for(i=0; i<irdat->cnt; i++)
+	{		
+		/* match pin */
+		if(irdat->pin[i] != buff->pin[i])
+		{
+			ismatched = false;
+			*errno = i;
+			if(false == islearn)
+			{
+				irprint(IRDBG, "auralic irkey matched one failed by pin!\n");
+			}
+			break;
+		}
+
+		/* match pulse width, with +/- ir_pulse_divid */
+		if(irdat->width[i] >= buff->width[i])
+		{
+			if((irdat->width[i] - irdat->width[i]/ir_pulse_divid) <= buff->width[i]	)
+		   	{
+		   		continue;
+			}
+		}
+		else
+		{
+			if((irdat->width[i] + irdat->width[i]/ir_pulse_divid) >= buff->width[i]	)
+		   	{
+		   		continue;
+			}
+		}
+		
+		if(false == islearn)
+		{
+			irprint(IRDBG, "auralic irkey matched one failed by 1/%d, %d%%!\n", 
+			               ir_pulse_divid, 100/ir_pulse_divid);
+		}
+		
+		ismatched = false;
+		*errno = i;
+		break;
+	}
+
+out:
+	return ismatched;
+}
+
+irdat_t * ir_match_frame_for_all(irdat_t *buff)
+{	
+	int i, errno;
+	irdat_t * matched = NULL;
+
+	/* match buff with all irkey_array[] */
+	for(i=0; i<IR_KEYS_COUNT; i++)
+	{
+		if(true == ir_match_frame_for_one(irkey_array[i], buff, &errno))
+		{
+			matched = irkey_array[i];
+			return matched;
+		}
+	}
+	
+	/* match buff with all irkey_extra[] */
+/*
+	for(i=0; i<IR_KEYS_EXTRA; i++)
+	{
+		if(true == ir_match_frame_for_one(irkey_extra[i], buff, &errno))
+		{
+			matched = irkey_extra[i];
+			matched->key = irkey_recv;
+			return matched;
+		}
+	}
+*/
+	return NULL;
+}
+
+/*
+check whether this key has been exist in irkey_array,
+if yes, update it's key value
+if no, do nothing
+*/
+bool ir_check_new_with_exist_key(irdat_t *news, int keyvalue)
+{
+	bool matched = false;
+	int i, errno;
+
+    duplex_key = 0; //learn again, so clear the duplex_key
+    
+	for(i=0; i<IR_KEYS_COUNT; i++)
+	{
+		if(true == ir_match_frame_for_one(news, irkey_array[i], &errno))
+		{
+			/* this key is already exist, so update it's key value */
+            duplex_key = irkey_array[i]->key; // save the duplex key
+			irkey_array[i]->key = keyvalue;
+			matched = true;
+		}
+	}
+
+    if(true == matched)
+    {        
+        for(i=0; i<IR_KEYS_COUNT; i++)
+    	{
+    		if(duplex_key == irkey_array[i])
+    		{
+    			/* this key is already exist, so update it's key value */
+    			irkey_array[i]->key = keyvalue;
+    		}
+    	}
+    }
+
+	return matched;
+}
+
+bool ir_learn_frame_to_irkeys(void)
+{
+	//static int learn_idx = 1;
+	int i, j, errno, match_cnt, match_total=0;
+	bool ret = false;
+	irdat_t *irdat = NULL;
+		
+	//irprint(IRNOR, "%d", learn_idx++);
+	
+	if(IR_LEARN_COUNT > cur_learn)
+	{
+		irprint(IRDBG, "can't learn, cur=%d\n", cur_learn);
+		return false;
+	}
+	
+	if(NULL == (irdat=ir_find_a_free_space()))
+	{		
+		irprint(IRNOR, "no free key space, stop learn\n");
+		return false;
+	}
+	
+	for(i=0; i<IR_LEARN_COUNT-1; i++)
+	{
+		match_cnt = 0;
+		for(j=i+1; j<IR_LEARN_COUNT; j++)
+		{
+			if(true == ir_match_frame_for_one(irlearns[i], irlearns[j], &errno))
+			{	
+				if(NOT_LEARNED == irlearns[j]->cfg)
+				{
+					match_cnt++;
+					irlearns[j]->cfg = HAS_LEARNED;// matched, so clear this learn buff
+					irprint(IRDBG, "frame learn one: i=%d  j=%d match_cnt=%d irkey_learn=%d\n", i, j, match_cnt, irkey_learn);
+				}
+			}
+		}
+		
+		if(ir_match_level <= match_cnt)
+		{
+			/* copy learned dat to irdat, then clean irlean[j] */
+			match_total++;
+			ret = true;
+			if(true == ir_check_new_with_exist_key(irlearns[i], irkey_learn))
+			{
+				/* this key is exist, just update it */
+				irprint(IRNOR, "already exist, so update it's value=%d\n", irkey_learn);
+			}
+			else
+			{
+			    /* this is a new key, so add it */
+				memcpy((void *)irdat, (void *)irlearns[i], sizeof(irdat_t));
+				irdat->key = irkey_learn;
+
+				/* continue learning next keys in irlearn[] */
+				if(NULL == (irdat=ir_find_a_free_space()))
+				{		
+					irprint(IRNOR, "no free key space, stop learn\n");
+					return false;
+				}
+			}
+		}
+	}
+
+	if(match_total)
+	{
+		//learn_idx=1;
+		irprint(IRNOR, "\nkey=%d, learned success, matched %d!\n",
+			           irkey_learn, match_total);
+	}
+	
+	return ret;
+}
+
+int ir_clean_by_key_value(int key)
+{
+	int i;
+	int ret = 0;
+	
+	for(i=0; i<IR_KEYS_COUNT; i++)
+	{
+		if((0 != irkey_array[i]->cnt) && (key == irkey_array[i]->key))
+		{
+			if(key == irkey_recv)
+			{
+				/* clean the old key value */
+				irkey_recv = IR_INVALID_KEY;
+			}
+			
+			irprint(IRDBG, "irkey array[%d] is cleaned, cnt=%d  key=%d\n",
+				            i, irkey_array[i]->cnt, irkey_array[i]->key);
+			irkey_array[i]->cnt = 0;
+			irkey_array[i]->key = 0;
+			ret++;
+		}
+	}
+	
+	return ret;
+}
+
+int ir_clean_all_irkey_array(void)
+{
+	int i, matched=0;
+	
+    duplex_key = 0;//deleted keys count
+    
+	for(i=0; i<IR_KEYS_COUNT; i++)
+	{
+		if(0 != irkey_array[i]->cnt)
+			matched++;
+		
+		irkey_array[i]->cnt = 0;
+		irkey_array[i]->key = 0;
+	}
+	
+	/* clean the old key value */
+	irkey_recv = IR_INVALID_KEY;
+	irprint(IRDBG, "all irkey array[...] is cleaned\n");
+
+	return matched;
+}
+
+int idx_per_learn = 1;
+enum hrtimer_restart irtimer_timeout_handle(struct hrtimer *timer)
+{
+	static int idx_last = 0;
+	static bool iszero = false;
+	
+	if(false == isbusy)
+	{
+		/* now not being receive */
+		idx_last = 0; //fresh idx_recv
+		goto restart_irtimer;
+	}
+
+	if(idx_recv != idx_last)
+	{
+		/* now being receive */
+		idx_last = idx_recv; //fresh idx_recv
+		goto restart_irtimer;
+	}
+	
+	if(0 == idx_recv && false == iszero)
+	{
+		/* now being receive */
+		iszero = true;
+		idx_last = idx_recv; //fresh idx_recv
+		goto restart_irtimer;
+	}
+
+	/* received some data, start to handle it now */
+	iszero = false;
+	
+	/* stop timer first */
+	ir_stop_timer();
+
+	/* clear idx_last */
+	idx_last = 0;
+	//irprint(IRDBG, "timeout=%u, idx_recv=%d!\n", 0xffffffff - ir_get_timer_cnr(), idx_recv);
+	
+	/* copy ir frame to irbuff*/
+	ir_copy_frame_to(irecv, irbuff, idx_recv);
+	idx_recv = 0; //ready for next use
+	isbusy = false;
+	
+	ir_print_frame(irbuff);
+
+	/* start to handle irbuff */	
+	if(true == islearn)
+	{
+		/* this is a learn frame */
+		//ir_copy_frame_to(irbuff, irlearns[idx_learn++], irbuff->cnt);
+		irprint(IRDBG, "%d", idx_per_learn++);
+		ir_updating_learn_buff(irbuff);		
+		learn_ret = -EINVAL;
+		if(true == ir_learn_frame_to_irkeys())
+		{
+			learn_ret = duplex_key;// return the duplex key
+			islearn = false; // stop learn 
+			idx_learn = 0;
+			idx_per_learn = 1;
+			wake_up_interruptible(&irwq);
+		}
+		else if(IR_ERROR_LEVEL < idx_per_learn)
+		{
+			islearn = false; // stop learn 
+			idx_learn = 0;
+			idx_per_learn = 1;
+			wake_up_interruptible(&irwq);
+			irprint(IRNOR, "\nauralic irkey learn failed, too many errors!\n");
+		}
+	}
+	else
+	{
+		irdat_t *irdat = NULL;
+		/* this is a normal frame, match it */
+		if(NULL != (irdat=ir_match_frame_for_all(irbuff)))
+		{
+			irkey_recv = irdat->key; // get the key from match array
+			atomic_set(&irdev_atomic_rd, 1);
+			wake_up_interruptible(&irdev_rdwq);
+			irkey_event_key.key = irkey_recv;
+			irkey_event_key.jiffies = jiffies;
+		    wake_up_process(irkeyreport_task);
+			irprint(IRDBG, "frame matched, cnt=%d, key=%d\n", irdat->cnt, irkey_recv);
+			irdat = NULL;
+		}
+		else
+		{
+			irprint(IRDBG, "frame not matched, cnt=%d\n", irbuff->cnt);
+		}
+	}
+	
+
+restart_irtimer:	
+	
+	kt = ktime_set(0, ir_fm_time_ms*1000000);//ms to ns 
+	hrtimer_forward_now(&irtimer, kt);
+
+	return HRTIMER_RESTART;
+}
+
+int ir_has_how_many_keys(void)
+{
+	int i, matched=0;
+	
+	for(i=0; i<IR_KEYS_COUNT; i++)
+	{
+		if(0 != irkey_array[i]->cnt)
+			matched++;
+	}
+
+	return matched;
+}
+
+ssize_t irproc_read(struct file *filp, char __user *usrbuf, size_t size, loff_t *offset)
+{
+    int len = 0, tmp = 0;
+    char buff[500] = {0};
+    
+    if(0 != *offset)
+        return 0;
+    
+    len += sprintf(buff+len, "readto   = %d\n",  gpio_get_value(READY_TO_LLINK_DOWN_PIN));
+    len += sprintf(buff+len, "plugfrom = %d\n",  gpio_get_value(PLUG_FROM_LLINK_DOWN_PIN));
+	#if !(IRKEY_INTERRUPT_KEYS)
+    len += sprintf(buff+len, "poll_delay: %02d ms!\n", polling_delay_ms);
+    #endif
+    /*
+    len += sprintf(buff+len, "  cr: %08x!\n", *(irbase + EPITCR));
+    len += sprintf(buff+len, "  sr: %08x!\n", *(irbase + EPITSR));
+    len += sprintf(buff+len, "  lr: %08x!\n", *(irbase + EPITLR));
+    len += sprintf(buff+len, "cmpr: %08x!\n", *(irbase + EPITCMPR));
+    len += sprintf(buff+len, "cntr: %08x!\n", *(irbase + EPITCNR));
+    */
+    len += sprintf(buff+len, "debug: %s\n", true == irprint_level ? "on":"off");
+    len += sprintf(buff+len, "divid: 1/%d, %d%%(default:1/%d, %d%%)\n", 
+		           ir_pulse_divid, 100/ir_pulse_divid, IR_PULSE_DIVID, 100/IR_PULSE_DIVID);
+    len += sprintf(buff+len, "pulse max: %d\n", IR_FRAME_LEN_MAX);	
+    len += sprintf(buff+len, "duplex  key: %d\n", duplex_key);
+    duplex_key = 0;
+    len += sprintf(buff+len, "frame timeout: %dms(default:%dms)\n", ir_fm_time_ms, IR_FM_TIME_MS);
+    len += sprintf(buff+len, "report delay : %dms\n", irkey_report_delay_ms);
+    len += sprintf(buff+len, "match level: %d (normal:%d, long press:%d)\n", 
+		                      ir_match_level, IR_MATCH_NOR_LEVEL, IR_MATCH_PRESS_LEVEL);
+
+	tmp = ir_has_how_many_keys();
+    len += sprintf(buff+len, "irkeys used:%d, free:%d, total:%d\n", tmp, IR_KEYS_COUNT-tmp, IR_KEYS_COUNT);
+    
+    if(0 != copy_to_user(usrbuf, buff, len))
+    {
+        return 0;
+	}
+	
+    *offset = len;
+	
+    return len;
+}
+
+int ir_save_irkeys_to_txt_file(void)
+{
+	int i, j, len;
+	mm_segment_t fs; 
+	char filename[100];
+	struct file *fp = NULL;
+	struct iovec iov; // new
+	struct kiocb kiocb;
+	struct iov_iter iter;
+	void *buff = NULL;
+	struct page *page = NULL;
+	irdat_t *irbuff = NULL;
+
+	page = alloc_pages(GFP_KERNEL, get_order(IR_TXT_FILE_SIZE));
+	if(NULL == page)
+	{
+		irprint(IRNOR, "auralic alloc pages for write txt failed!\n");
+		return -EINVAL;
+	}
+	buff = page_address(page);
+	memset(buff, 0, IR_TXT_FILE_SIZE);
+	for(i=0; i<IR_KEYS_COUNT; i++)
+	{
+		irbuff = irkey_array[i];
+		if(0 == irbuff->cnt)
+		{
+			continue;
+		}
+		
+		sprintf(filename, "%s/%d_key%d.txt", IRKEYS_PATH, i, irbuff->key);
+		len = 0;
+		for(j=0; j<irbuff->cnt; j++)
+		{
+			if(IR_TXT_FILE_SIZE < len)
+				break;
+			len += sprintf(buff+len, IR_TXT_FORMATE, j, irbuff->pin[j], irbuff->width[j]);
+		}
+		
+		fp = filp_open(filename, O_CREAT|O_RDWR, 0644);
+		if(IS_ERR(fp))			
+		{
+			irprint(IRNOR, "auralic irkey can not create file: %s\n", filename);
+			free_pages((unsigned long)buff, get_order(IR_TXT_FILE_SIZE));
+			return -EINVAL;
+		}
+		//fs = get_fs();
+		//set_fs(KERNEL_DS);
+		fs = force_uaccess_begin();
+		fp->f_pos = 0;
+		iov.iov_base = (void __user *)buff;
+		iov.iov_len = len;
+		init_sync_kiocb(&kiocb, fp);
+		kiocb.ki_pos = fp->f_pos;
+		iov_iter_init(&iter, WRITE, &iov, 1, len);
+		//len=fp->f_op->write_iter(&kiocb, &iter);
+        loff_t pos = 0;
+		len = kernel_write(fp,buff,len,&pos);
+        irprint(IRNOR, "auralic irkey saved txt file: %s, len=%d\n", filename, len);
+		filp_close(fp, NULL);
+		//set_fs(fs); 
+        force_uaccess_end(fs);
+	}	
+
+	free_pages((unsigned long)buff, get_order(IR_TXT_FILE_SIZE));
+	
+	return 0;
+}
+
+bool ir_analyse_irkey_to_irbuff(void *fbuff, int flen, irdat_t *irkey)
+{
+	bool ret = false;
+	char ch[100];
+	char *pbuff = NULL;
+	int i, pin, width, tmp;
+	
+	for(i=0; i<IR_FRAME_LEN_MAX; i++)
+	{
+		sprintf(ch, "i=%d, pin", i);
+		pbuff = strstr(fbuff, ch);
+		if(NULL == pbuff)
+		{
+			irprint(IRDBG, "auralic irkey strstr end, i=%d\n", i);
+			break;
+		}
+		
+		tmp = sscanf(pbuff, IR_TXT_FORMATE, &i, &pin, &width);
+		//irprint(IRDBG, "i=%d pin=%d width=%d\n", i, pin, width);
+		if(3 != tmp)
+		{
+			irprint(IRDBG, "auralic irkey sscanf end, paramcnt=%d  i=%d\n", tmp, i);
+			break;
+		}
+		
+		irkey->pin[i] = pin;
+		irkey->width[i] = width;
+	}
+
+	if(0 < i)
+	{
+		irkey->cnt = i;
+		ret = true;// has matched
+	}
+
+	return ret;
+}
+
+bool ir_get_key_value_from_buff(char *buff, int *key)
+{	
+	bool ret= false;
+	char *pbuff = NULL;
+	int x=0;
+	
+	pbuff = strstr(buff, "_key");
+	if(NULL == pbuff)
+	{
+		irprint(IRNOR, "auralic irkey strstr failed for _key!\n");
+		return ret;
+	}
+	
+	if(1 != sscanf(pbuff, "_key%d", &x))
+	{
+		irprint(IRNOR, "auralic irkey sscanf failed for _key!\n");
+		return ret;
+	}
+
+	if(IR_KEYS_END_VALUE < x)
+	{
+		irprint(IRNOR, "auralic irkey sscanf invalid key=%d!\n", x);
+		return ret;
+	}
+	
+	*key = x;
+	ret = true;
+	
+	return ret;
+}
+
+void ir_analyse_from_txt_file(char *filename)
+{
+	mm_segment_t fs; 
+	struct file *fp = NULL;
+	void *buff = NULL;
+	struct page *page = NULL;
+	struct iovec iov; // new
+	struct kiocb kiocb;
+	struct iov_iter iter;
+	irdat_t *irbuff = NULL;
+	int key;
+	
+	page = alloc_pages(GFP_KERNEL, get_order(IR_TXT_FILE_SIZE));
+	if(NULL == page)
+	{
+		irprint(IRNOR, "auralic irkey alloc pages for read txt failed!\n");
+		return ;
+	}
+	buff = page_address(page);
+
+	if(false == ir_get_key_value_from_buff(filename, &key))
+	{
+		irprint(IRNOR, "auralic irkey get value faild from %s!\n", filename);
+		return;
+	}
+	
+	fp = filp_open(filename, O_RDWR, 0644);
+	if(!IS_ERR(fp))
+	{
+		int len;
+		//fs = get_fs();
+		//set_fs(KERNEL_DS);
+		fs = force_uaccess_begin();
+		memset(buff, 0, IR_TXT_FILE_SIZE);
+		iov.iov_base = (void __user *)buff;
+		iov.iov_len = IR_TXT_FILE_SIZE;
+		init_sync_kiocb(&kiocb, fp);
+		kiocb.ki_pos = fp->f_pos;
+		iov_iter_init(&iter, READ, &iov, 1, IR_TXT_FILE_SIZE);
+		//if(0 < (len=fp->f_op->read_iter(&kiocb, &iter)))
+        loff_t pos = 0;
+        fp->f_pos = 0;
+        size_t count = IR_TXT_FILE_SIZE;
+		if(0 < (len = kernel_read(fp,buff,count,&pos)))
+        {
+			irbuff = ir_find_a_free_space();
+			if(NULL != irbuff)
+			{
+				if(true == ir_analyse_irkey_to_irbuff(buff, len, irbuff))
+				{
+					irbuff->key = key;
+					irprint(IRNOR, "auralic irkey analyse success from %s, cnt=%d  key=%d\n", 
+						           filename, irbuff->cnt, irbuff->key);
+				}
+				else
+				{					
+					irbuff->cnt = 0;
+					irbuff->key = 0;
+					irprint(IRNOR, "auralic irkey analyse failed frome %s, no valid key value!\n", filename);
+				}
+			}
+			else
+				irprint(IRNOR, "auralic irkey no free irkey space, stop analyse %s\n", filename);
+		}
+		else
+		{
+			irprint(IRNOR, "auralic irkey read txt %s failed!===%d\n", filename,len);
+		}
+		filp_close(fp, NULL);
+		//set_fs(fs); 
+        force_uaccess_end(fs);
+	}
+	
+	free_pages((unsigned long)buff, get_order(IR_TXT_FILE_SIZE));
+}
+
+void ir_save_irkeys_to_hex_file(void)
+{
+	int i, len;
+    mm_segment_t fs; 
+	char filename[100];
+    struct file *fp = NULL;
+    struct iovec iov; // new
+	struct kiocb kiocb;
+	struct iov_iter iter;
+    void *buff = NULL;
+    struct page *page = NULL;
+	irdat_t *irbuff = NULL;
+
+    page = alloc_page(GFP_KERNEL);
+    if(NULL == page)
+    {
+        irprint(IRNOR, "auralic irkey alloc pages for write hex failed!\n");
+        return ;
+    }
+    buff = page_address(page);
+    memset(buff, 0, 4096);
+	for(i=0; i<IR_KEYS_COUNT; i++)
+	{
+		irbuff = irkey_array[i];
+		if((0 == irbuff->cnt) || (0 == irbuff->key))
+		{
+			continue;
+		}
+		
+    	sprintf(filename, "%s/%d_key%d.hex", IRKEYS_PATH, i, irbuff->key);
+		#if 0
+		len = 0;
+		for(j=0; j<irbuff->cnt; j++)
+		{
+			len += sprintf(buff+len, "i=%d, pin=%d, width=%d\n", j, irbuff->pin[j], irbuff->width[j]);
+		}
+		#endif
+		
+		fp = filp_open(filename, O_CREAT|O_RDWR, 0644);
+	    if(IS_ERR(fp))			
+    	{
+			irprint(IRNOR, "auralic irkey can not create file: %s\n", filename);
+    		continue;
+    	}
+        //fs = get_fs();
+        //set_fs(KERNEL_DS);
+		fs = force_uaccess_begin();
+		fp->f_pos = 0;
+		i_size_write(fp->f_inode, 0);
+        //iov.iov_base = (void __user *)buff;
+        len = sizeof(irdat_t);
+        iov.iov_base = (void __user *)irbuff;
+        iov.iov_len = len;
+        init_sync_kiocb(&kiocb, fp);
+        kiocb.ki_pos = fp->f_pos;
+        iov_iter_init(&iter, WRITE, &iov, 1, len);
+        len=fp->f_op->write_iter(&kiocb, &iter);
+		irprint(IRNOR, "auralic irkey saved hex file: %s, len=%d\n", filename, len);
+        filp_close(fp, NULL);
+        //set_fs(fs); 
+        force_uaccess_end(fs);
+	}	
+
+	free_page((unsigned long)buff);
+}
+
+void ir_analyse_from_hex_file(char *filename)
+{
+	loff_t  pos;
+    mm_segment_t fs; 
+    struct file *fp = NULL;
+    void *buff = NULL;
+    struct page *page = NULL;
+    struct iovec iov; // new
+	struct kiocb kiocb;
+	struct iov_iter iter;
+	irdat_t *irbuff = NULL;
+
+    page = alloc_page(GFP_KERNEL);
+    if(NULL == page)
+    {
+        irprint(IRNOR, "auralic irkey alloc pages for read hex failed!\n");
+        return ;
+    }
+    buff = page_address(page);
+
+	fp = filp_open(filename, O_RDWR, 0644);
+    if(!IS_ERR(fp))
+    {
+        int len;
+        //fs = get_fs();
+        //set_fs(KERNEL_DS);
+		fs = force_uaccess_begin();
+        pos = 0;
+        memset(buff, 0, 4096);
+        iov.iov_base = (void __user *)buff;
+        iov.iov_len = 4096;
+        init_sync_kiocb(&kiocb, fp);
+        kiocb.ki_pos = fp->f_pos;
+        iov_iter_init(&iter, READ, &iov, 1, 4096);
+        if(0 < (len=fp->f_op->read_iter(&kiocb, &iter)))
+        {
+        	irbuff = ir_find_a_free_space();
+			if(NULL != irbuff)
+			{
+        		memcpy(irbuff, buff, sizeof(irdat_t));
+				irprint(IRNOR, "auralic irkey analyse success frome %s, cnt=%d  key=%d\n", 
+					           filename, irbuff->cnt, irbuff->key);
+			}
+			else
+				irprint(IRNOR, "auralic irkey no free irkey space, stop analyse %s\n", filename);
+        }
+        else
+        {
+            irprint(IRNOR, "auralic irkey read hex %s failed!\n", filename);
+        }
+        filp_close(fp, NULL);
+        //set_fs(fs); 
+        force_uaccess_end(fs);
+    }
+	
+	free_page((unsigned long)buff);
+}
+
+static ssize_t irproc_write(struct file *filp, const char __user *usr_buf,
+                             		size_t count, loff_t *f_pos)
+{
+    int param_cnt;
+    char len;
+    int value = 0;
+    char cmd[100];
+    char buff[100] = {0};
+    unsigned int reg = 0;
+
+    len = count < 100 ? count : 99;
+    if(0 != copy_from_user(buff, usr_buf, len))
+    {
+        goto out;
+    }
+    
+    buff[99] = '\0';
+    
+    param_cnt = sscanf(buff, "%s %x %d", cmd, &reg, &value);
+    if(1 > param_cnt)
+    {
+        irprint(IRNOR, "auralic irkey invalide proc command\n");
+        goto out;
+    }
+    
+    if(0 == strncmp(cmd, "mem", 2))
+    {
+		int i, j;
+		char *ch;
+		for(i=0; i<IR_KEYS_COUNT; i++)
+		{
+			memset((void *)irkey_array[i], 0, sizeof(irdat_t));
+			irkey_array[i]->key = i;
+			irkey_array[i]->cnt = i;
+		}
+		
+		for(i=0; i<IR_KEYS_COUNT; i++)
+		{
+			ch = (char *)irkey_array[i]->width;
+			irprint(IRDBG, "memtest i=%d ,key=%d, cnt=%d\n", i, irkey_array[i]->key, irkey_array[i]->cnt);
+			for(j=0; j<IR_FRAME_LEN_MAX; j++)
+			if(0 != *ch)
+			{					
+				irprint(IRNOR, "memtest err\n");
+				break;
+			}
+					
+		}
+		
+		irprint(IRNOR, "memtest ok\n");
+    }
+	else if(0 == strncmp(cmd, "start", 5))
+    {
+    	ir_start_timer();
+	}
+	else if(0 == strncmp(cmd, "stop", 5))
+    {
+    	//ir_stop_timer();    
+		irprint(IRDBG, "learn is stoped by proc command\n");		
+		learn_ret = -EINVAL;
+		islearn = false; // stop learn 
+		idx_learn = 0;
+		idx_per_learn = 1;
+		wake_up_interruptible(&irwq);
+	}
+	else if(0 == strncmp(cmd, "save", 4)) //save the learned key to file
+    {
+    	//ir_save_irkeys_to_hex_file();
+    	ir_save_irkeys_to_txt_file();
+	}
+	else if(0 == strncmp(cmd, "dbgon", 5)) //save the learned key to file
+    {
+    	irprint_level = true;
+		irprint(IRDBG, "auralic irkey debug on\n");
+	}
+	else if(0 == strncmp(cmd, "dbgoff", 6)) //save the learned key to file
+    {
+    	irprint_level = false;
+		irprint(IRNOR, "auralic irkey debug off\n");
+	}
+	else if(0 == strncmp(cmd, "cleanall", 8)) //clear all the array[...]
+    {
+    	irprint(IRNOR, "all key is cleaned, matched %d\n", ir_clean_all_irkey_array());
+	}
+	else if(0 == strncmp(cmd, "clean", 5)) //clear array[.] by key value
+    {
+    	param_cnt = sscanf(buff, "%s %d %d", cmd, &reg, &value);
+		if(2 == param_cnt && 255 > reg)
+		{
+	    	irprint(IRNOR, "key=%d is cleaned, matched %d\n", reg, ir_clean_by_key_value(reg));
+		}
+		else
+		{
+			irprint(IRNOR, "wrong clean command\n");
+		}
+	}
+	else if(0 == strncmp(cmd, "divid", 5)) //
+    {
+    	param_cnt = sscanf(buff, "%s %d %d", cmd, &reg, &value);
+		if(2 == param_cnt && 255 > reg)
+		{
+			ir_pulse_divid = reg;
+	    	irprint(IRNOR, "set ir_pulse_divid as %d, +/-%d%%\n", ir_pulse_divid, 100/ir_pulse_divid);
+		}
+		else
+		{
+			irprint(IRNOR, "wrong divid command\n");
+		}
+	}
+	else if('/' == cmd[0]) //analyse key value files
+    {
+    	if(NULL != strstr(cmd, "txt"))
+    		ir_analyse_from_txt_file(cmd);
+		else if(NULL != strstr(cmd, "hex"))
+    		ir_analyse_from_hex_file(cmd);
+		else
+			irprint(IRNOR, "wrong file formate, should be *.txt / *.hex\n");		
+	}
+	else if(0 == strncmp(cmd, "learn", 5))
+    {
+    	param_cnt = sscanf(buff, "%s %d %d", cmd, &reg, &value);
+		if(2 == param_cnt)
+		{
+			if(IR_KEYS_START_VAL > reg 
+			   || IR_KEYS_END_VALUE < reg)
+			{
+				irprint(IRNOR, "irkey can't learn for key=%d\n", reg);
+			}
+			else
+			{
+		    	irkey_learn = reg;
+		    	islearn = true;
+				idx_learn = 0;
+				cur_learn = 0;
+				ir_match_level = IR_MATCH_NOR_LEVEL;
+				irprint(IRNOR, "irkey learn for key=%d\n", irkey_learn);
+				wait_event_interruptible(irwq, false == islearn);
+			}
+		}
+		else
+		{
+			irprint(IRNOR, "wrong learn command\n");
+		}
+    }
+	else if(0 == strncmp(cmd, "press", 5))
+    {
+    	/* learn long press key */
+    	param_cnt = sscanf(buff, "%s %d %d", cmd, &reg, &value);
+		if(2 == param_cnt )
+		{
+			if(IR_KEYS_START_VAL > reg 
+			   || IR_KEYS_END_VALUE < reg)
+			{
+				irprint(IRNOR, "irkey can't learn long press for key=%d\n", reg);
+			}
+			else
+			{
+		    	irkey_learn = reg;
+		    	islearn = true;
+				idx_learn = 0; 
+				cur_learn = 0;
+				ir_match_level = IR_MATCH_PRESS_LEVEL;
+				irprint(IRNOR, "irkey learn long press for key=%d\n", irkey_learn);
+				wait_event_interruptible(irwq, false == islearn);
+			}
+		}
+		else
+		{
+			irprint(IRNOR, "wrong learn command\n");
+		}
+    }
+	else if(0 == strncmp(cmd, "fmtime", 6))
+    {
+    	param_cnt = sscanf(buff, "%s %d %d", cmd, &reg, &value);
+		if(2 == param_cnt)
+		{
+			ir_fm_time_ms = reg;
+			irprint(IRNOR, "set frame timeout as %d ms\n", ir_fm_time_ms);
+		}
+		else
+		{
+			irprint(IRNOR, "wrong fmtime command\n");
+		}
+    }
+	else if(0 == strncmp(cmd, "delay", 5))
+    {
+    	param_cnt = sscanf(buff, "%s %d %d", cmd, &reg, &value);
+		if(2 == param_cnt)
+		{
+			irkey_report_delay_ms =  reg;
+			irprint(IRNOR, "set key report delay as %d ms\n", irkey_report_delay_ms);
+		}
+		else
+		{
+			irprint(IRNOR, "wrong delay command\n");
+		}
+    }
+	else if(0 == strncmp(cmd, "readyto", 7))
+    {
+    	param_cnt = sscanf(buff, "%s %d %d", cmd, &reg, &value);
+		if(2 == param_cnt)
+		{   
+		    gpio_set_value(READY_TO_LLINK_DOWN_PIN, reg);
+			irprint(IRNOR, "set READY_TO_LLINK_DOWN_PIN = %d\n", reg);
+		}
+		else
+		{
+			irprint(IRNOR, "wrong readyto command\n");
+		}
+    }
+    #if !(IRKEY_INTERRUPT_KEYS)
+	else if(0 == strncmp(cmd, "poll_delay", 10))
+    {
+    	param_cnt = sscanf(buff, "%s %d %d", cmd, &reg, &value);
+		if(2 == param_cnt)
+		{   
+		    polling_delay_ms = reg;
+			irprint(IRNOR, "set polling_delay_ms = %d\n", reg);
+		}
+		else
+		{
+			irprint(IRNOR, "wrong poll_delay command\n");
+		}
+    }
+    #endif
+	else
+	{
+		irprint(IRNOR, "%s", helpstring);
+	}
+    
+out:    
+
+    return count;
+}
+
+
+static const struct  proc_ops irproc_op = {
+    .proc_read  = irproc_read,
+    .proc_write = irproc_write,
+};
+
+void ir_alloc_and_dispatch_mem(void)
+{
+	int i;
+	ircachep = kmem_cache_create("ircache", sizeof(irdat_t), 0, SLAB_HWCACHE_ALIGN, NULL); 
+	if(NULL == ircachep)
+	{
+		irprint(IRNOR, "auralic irkey alloc cache failed!\n");
+		return ;
+	}
+	
+	/* dispatch ir keys buff */
+	for(i=0; i<IR_KEYS_COUNT; i++)
+	{
+		irkey_array[i] = kmem_cache_alloc(ircachep, GFP_KERNEL);
+		if(NULL == irkey_array[i])
+		{
+			irprint(IRNOR, "auralic irkey alloc cache object for irkey_array[%d] failed!\n", i);
+			return ;
+		}
+		irkey_array[i]->cfg = NOT_LEARNED;
+		irkey_array[i]->cnt = 0;
+		irkey_array[i]->key = 0;
+	}
+	
+	/* dispatch ir learns buff */
+	for(i=0; i<IR_LEARN_COUNT; i++)
+	{
+		irlearns[i] = kmem_cache_alloc(ircachep, GFP_KERNEL);
+		if(NULL == irlearns[i])
+		{
+			irprint(IRNOR, "auralic irkey alloc cache object for irlearns[%d] failed!\n", i);
+			return ;
+		}
+		irlearns[i]->cfg = NOT_LEARNED;
+		irlearns[i]->cnt = 0;
+		irlearns[i]->key = 0;
+	}
+	
+	/* dispatch ir extra buff */
+	for(i=0; i<IR_KEYS_EXTRA; i++)
+	{
+		irkey_extra[i] = kmem_cache_alloc(ircachep, GFP_KERNEL);
+		if(NULL == irkey_extra[i])
+		{
+			irprint(IRNOR, "auralic irkey alloc cache object for irkey_extra[%d] failed!\n", i);
+			return ;
+		}
+		irkey_extra[i]->cfg = NOT_LEARNED;
+		irkey_extra[i]->cnt = 0;
+		irkey_extra[i]->key = 0;
+	}
+	
+	/* dispatch irbuff and irrecv */
+	irbuff = kmem_cache_alloc(ircachep, GFP_KERNEL);
+	if(NULL == irbuff)
+	{
+		irprint(IRNOR, "auralic irkey alloc cache object for irbuff failed!\n");
+		return ;
+	}
+	irbuff->cfg = NOT_LEARNED;
+	irbuff->cnt = 0;
+	irbuff->key = 0;
+		
+	irecv  = kmem_cache_alloc(ircachep, GFP_KERNEL);
+	if(NULL == irecv)
+	{
+		irprint(IRNOR, "auralic irkey alloc cache object for irecv failed!\n");
+		return ;
+	}
+	irecv->cfg = NOT_LEARNED;
+	irecv->cnt = 0;
+	irecv->key = 0;
+}
+
+void ir_free_kcache_mem(void)
+{
+	int i;
+	
+	for(i=0; i<IR_KEYS_COUNT; i++)
+	{
+	    kmem_cache_free(ircachep, irkey_array[i]);
+	}
+	
+	for(i=0; i<IR_LEARN_COUNT; i++)
+	{
+	    kmem_cache_free(ircachep, irlearns[i]);
+	}
+	
+	for(i=0; i<IR_KEYS_EXTRA; i++)
+	{
+	    kmem_cache_free(ircachep, irkey_extra[i]);
+	}
+	
+    kmem_cache_free(ircachep, irbuff);
+    kmem_cache_free(ircachep, irecv);
+	kmem_cache_destroy(ircachep);
+}
+
+int irdev_open(struct inode *inode, struct file *filp)     
+{
+	atomic_set(&irdev_atomic_rd, 0);
+    return 0;
+}  
+ 
+int irdev_release(struct inode *inode, struct file *filp)      
+{   
+    return 0;  
+}  
+
+static ssize_t irdev_read(struct file *filp, char __user *buf, size_t count, loff_t *ppos)  
+{	
+	if(0 == wait_event_interruptible(irdev_rdwq, 0 != atomic_read(&irdev_atomic_rd)))
+	{
+		atomic_set(&irdev_atomic_rd, 0);
+		put_user(irkey_recv, buf);
+		return 1;
+	}
+	else
+	{
+		return 0;
+	}
+}  
+
+ssize_t irdev_write(struct file *filp, const char __user *buf, size_t count, loff_t *ppos)
+{
+	return count;
+}
+
+long irdev_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
+{
+    int ret = 0;
+	int *parg = (int *)arg;
+    
+    if (_IOC_TYPE(cmd) != IRKEY_IOC_MAGIC) 
+	{
+		irprint(IRNOR, "auralic irkey invalid magic, magic=0x%x ioc_type=0x%x\n", IRKEY_IOC_MAGIC, _IOC_TYPE(cmd));
+        return -EINVAL;
+	}
+
+    if (_IOC_NR(cmd) > IRKEY_CMD_MAXNR)  
+	{
+		irprint(IRNOR, "auralic irkey invalid ioc_nr, IRKEY_CMD_MAXNR=0x%x ioc_nr=0x%x\n", IRKEY_CMD_MAXNR, _IOC_NR(cmd));
+        return -EINVAL;
+	}
+
+	switch(cmd) 
+	{		
+		case IRKEY_LEARN:
+		if(IR_KEYS_END_VALUE < arg
+			|| IR_KEYS_START_VAL > arg)
+		{
+			irprint(IRNOR, "auralic irkey can't learn for key=%lu\n", arg);
+			return -EINVAL;
+		}
+    	irkey_learn = arg;
+    	islearn = true;
+		idx_learn = 0;
+		cur_learn = 0;
+		ir_match_level = IR_MATCH_NOR_LEVEL;
+		irprint(IRNOR, "irkey learn for key=%d\n", irkey_learn);
+		wait_event_interruptible(irwq, false == islearn);
+		ret = learn_ret;
+		break;
+		
+		case IRKEY_PRESS:
+		if(IR_KEYS_END_VALUE < arg
+			|| IR_KEYS_START_VAL > arg)
+		{
+			irprint(IRNOR, "auralic irkey can't learn long press for key=%lu\n", arg);
+			return -EINVAL;
+		}
+    	irkey_learn = arg;
+    	islearn = true;
+		idx_learn = 0;
+		cur_learn = 0;
+		ir_match_level = IR_MATCH_PRESS_LEVEL;
+		irprint(IRNOR, "irkey learn for long press key=%d\n", irkey_learn);
+		wait_event_interruptible(irwq, false == islearn);
+		ret = learn_ret;
+		break;
+
+		case IRKEY_SAVE:
+    	ret = ir_save_irkeys_to_txt_file();
+		break;
+
+		case IRKEY_STOP_LEARN:			
+		learn_ret = -EINVAL;
+		islearn = false; // stop learn 
+		idx_learn = 0;
+		idx_per_learn = 1;
+		wake_up_interruptible(&irwq);
+		irprint(IRDBG, "learn is stoped by ioctrl command\n");
+		break;
+
+		case IRKEY_CLEAN:
+		if(IR_KEYS_END_VALUE < arg
+			|| IR_KEYS_START_VAL > arg)
+		{
+			irprint(IRNOR, "auralic irkey can't clean for key=%lu\n", arg);
+			return -EINVAL;
+		}
+		ir_clean_by_key_value(arg);
+		ret = 0;
+		break;
+
+		case IRKEY_CLEAN_ALL:
+		ir_clean_all_irkey_array();
+		ret = 0;
+		break;
+        
+		case GET_PLUG_LLINK_DOWN_BLOCK:
+		if(false == is_plug_llink_down)
+			wait_event_interruptible(linkwq, is_plug_llink_down);
+		else
+			wait_event_interruptible(linkwq, (!is_plug_llink_down));
+
+		irprint(IRDBG, "ioctl got plug_llink_down rising\n");
+		break;
+		
+		case GET_PLUG_LLINK_DOWN_IMDIAT:
+		irprint(IRDBG, "ioctl get plug_llink_down = %d\n", gpio_get_value(PLUG_FROM_LLINK_DOWN_PIN));
+		put_user(gpio_get_value(PLUG_FROM_LLINK_DOWN_PIN),parg);
+        break;
+		
+		case SET_READY_LLINK_DOWN:
+		irprint(IRDBG, "ioctl set ready_llink_down = %lu\n", arg);
+        gpio_set_value(READY_TO_LLINK_DOWN_PIN, arg);
+		break;
+		
+		default:  
+		return -EINVAL;
+	}
+	
+    return ret;
+}
+
+static const struct file_operations irdev_fops = 
+{      
+	.owner = THIS_MODULE, 
+	.open = irdev_open,
+	.release = irdev_release,
+	.read = irdev_read,
+	.write = irdev_write,
+	.unlocked_ioctl = irdev_ioctl,
+};
+
+bool ir_register_char_dev(void)
+{
+	if(0 < alloc_chrdev_region(&irdevno, 0, 1, IR_DEV_NAME))
+	{
+		irprint(IRNOR, "auralic irkey register /dev/%s failed!\n", IR_DEV_NAME);
+		return false;
+	}
+
+	cdev_init(&irdev.cdev, &irdev_fops);
+	irdev.cdev.owner = THIS_MODULE;
+	irdev.cdev.ops = &irdev_fops;
+	cdev_add(&irdev.cdev, irdevno, 1); 
+
+	irdev_class = class_create(THIS_MODULE, IR_DEV_NAME);
+	device_create(irdev_class, NULL, irdevno, NULL, IR_DEV_NAME);	
+	init_waitqueue_head(&irdev_rdwq);
+	atomic_set(&irdev_atomic_rd, 0);
+
+	return true;
+}
+
+void ir_unregister_char_dev(void)
+{
+	device_destroy(irdev_class, irdevno); 
+	class_destroy(irdev_class);
+    cdev_del(&irdev.cdev); 
+    unregister_chrdev_region(irdevno,1);
+}
+
+#define IR_PIN1  			(3*32 + 1)//21
+#define IR_PIN2  			(0*32 + 6)//22
+#define IR_PIN3  			(0*32 + 5)//23
+#define IR_PIN4  			(3*32 + 16)//24
+//#define IR_PIN5  			(3*32 + 11)//25
+
+#if IRKEY_INTERRUPT_KEYS
+irqreturn_t rotary_interrupt_handler1(int devid, void * data)
+{
+    int key = gpio_get_value(IR_PIN1);
+    
+    if(0 == key)//press
+	    input_report_key(aura_input_dev, 21, 1);
+    else
+	    input_report_key(aura_input_dev, 21, 0);
+	    
+	input_sync(aura_input_dev);
+	
+	irprint(IRDBG, "irq key21 = %d\n", key);
+
+    return IRQ_HANDLED;
+}
+
+irqreturn_t rotary_interrupt_handler2(int devid, void * data)
+{
+    int key = gpio_get_value(IR_PIN2);
+    
+    if(0 == key)//press
+	    input_report_key(aura_input_dev, 22, 1);
+    else
+	    input_report_key(aura_input_dev, 22, 0);
+	    
+	input_sync(aura_input_dev);
+	
+	irprint(IRDBG, "irq key22 = %d\n", key);
+
+    return IRQ_HANDLED;
+}
+
+irqreturn_t rotary_interrupt_handler3(int devid, void * data)
+{
+    int key = gpio_get_value(IR_PIN3);
+    
+    if(0 == key)//press
+	    input_report_key(aura_input_dev, 23, 1);
+    else
+	    input_report_key(aura_input_dev, 23, 0);
+	    
+	input_sync(aura_input_dev);
+	
+	irprint(IRDBG, "irq key23 = %d\n", key);
+
+    return IRQ_HANDLED;
+}
+
+irqreturn_t rotary_interrupt_handler4(int devid, void * data)
+{
+    int key = gpio_get_value(IR_PIN4);
+    
+    if(0 == key)//press
+	    input_report_key(aura_input_dev, 24, 1);
+    else
+	    input_report_key(aura_input_dev, 24, 0);
+	    
+	input_sync(aura_input_dev);
+	
+	irprint(IRDBG, "irq key24 = %d\n", key);
+
+    return IRQ_HANDLED;
+}
+
+irqreturn_t rotary_interrupt_handler5(int devid, void * data)
+{
+    int key = gpio_get_value(IR_PIN5);
+    
+    if(0 == key)//press
+	    input_report_key(aura_input_dev, 25, 1);
+    else
+	    input_report_key(aura_input_dev, 25, 0);
+	    
+	input_sync(aura_input_dev);
+	
+	irprint(IRDBG, "irq key25 = %d\n", key);
+
+    return IRQ_HANDLED;
+}
+
+#else  //polling keys
+
+static struct task_struct *irkey_poll_task = NULL;
+
+int irkey_polling_task_fn(void *data)
+{	
+    bool is_need_sync = false;
+    int plugfromdown;
+	int last_key1, last_key2,last_key3,last_key4,last_key5,new_key;
+	
+    irprint(IRNOR, "auralic start irkey_polling_task_fn\n");
+    
+	last_key1 = gpio_get_value(IR_PIN1);
+	last_key2 = gpio_get_value(IR_PIN2);
+	last_key3 = gpio_get_value(IR_PIN3);
+	last_key4 = gpio_get_value(IR_PIN4);
+    plugfromdown = gpio_get_value(PLUG_FROM_LLINK_DOWN_PIN);
+    
+    while(!kthread_should_stop())
+    {
+        
+        schedule_timeout_interruptible(HZ/(1000/polling_delay_ms));
+		new_key = gpio_get_value(IR_PIN1);        
+        if(last_key1 != new_key)
+        {
+            last_key1 = new_key;
+            if(0 == new_key)//press
+        	    input_report_key(aura_input_dev, 21, 1);
+            else
+        	    input_report_key(aura_input_dev, 21, 0);
+	        irprint(IRDBG, "irq key21 = %d\n", new_key);
+            is_need_sync = true;
+        }
+        
+		new_key = gpio_get_value(IR_PIN2); 
+        if(last_key2 != new_key)
+        {
+            last_key2 = new_key;
+            if(0 == new_key)//press
+        	    input_report_key(aura_input_dev, 22, 1);
+            else
+        	    input_report_key(aura_input_dev, 22, 0);
+	        irprint(IRDBG, "irq key22 = %d\n", new_key);
+            is_need_sync = true;
+        }
+        
+		new_key = gpio_get_value(IR_PIN3); 
+        if(last_key3 != new_key)
+        {
+            last_key3 = new_key;
+            if(0 == new_key)//press
+        	    input_report_key(aura_input_dev, 23, 1);
+            else
+        	    input_report_key(aura_input_dev, 23, 0);
+	        irprint(IRDBG, "irq key23 = %d\n", new_key);
+            is_need_sync = true;
+        }
+        
+		new_key = gpio_get_value(IR_PIN4); 
+        if(last_key4 != new_key)
+        {
+            last_key4 = new_key;
+            if(0 == new_key)//press
+        	    input_report_key(aura_input_dev, 24, 1);
+            else
+        	    input_report_key(aura_input_dev, 24, 0);
+	        irprint(IRDBG, "irq key24 = %d\n", new_key);
+            is_need_sync = true;
+        }
+     /*   
+		new_key = gpio_get_value(IR_PIN5); 
+        if(last_key5 != new_key)
+        {
+            last_key5 = new_key;
+            if(0 == new_key)//press
+        	    input_report_key(aura_input_dev, 25, 1);
+            else
+        	    input_report_key(aura_input_dev, 25, 0);
+	        irprint(IRDBG, "irq key25 = %d\n", new_key);
+            is_need_sync = true;
+        }
+       */ 
+        if(true == is_need_sync)
+            input_sync(aura_input_dev);        
+
+		new_key = gpio_get_value(PLUG_FROM_LLINK_DOWN_PIN); 
+        if(plugfromdown != new_key)
+        {
+            plugfromdown = new_key;
+            irprint(IRNOR, "plug_llink_down_interrupt = %d\n", new_key);
+        
+            if(false == is_plug_llink_down)
+    			is_plug_llink_down = true; 
+    		else
+    			is_plug_llink_down = false;
+    		
+    		wake_up_interruptible_all(&linkwq);
+        }
+        
+    }
+    
+    set_current_state(TASK_RUNNING);
+	
+    irprint(IRNOR, "auralic leave irkey_polling_task_fn\n");
+    
+    return 0;
+}
+
+#endif
+/*
+irqreturn_t plug_llink_down_interrupt_handler(int devid, void * data)
+{
+    int key = gpio_get_value(PLUG_FROM_LLINK_DOWN_PIN);
+    
+    //if(0 == key)
+    {
+	    irprint(IRNOR, "plug_llink_down_interrupt = %d\n", key);
+        
+        if(false == is_plug_llink_down)
+			is_plug_llink_down = true;
+		else
+			is_plug_llink_down = false;
+		
+		wake_up_interruptible_all(&linkwq);
+    }
+
+    return IRQ_HANDLED;
+}
+*/
+
+
+void aura_input_init(int key_start_val, int key_end_val)
+{
+	int i;
+	
+	aura_input_dev = input_allocate_device();
+	
+	for(i=key_start_val; i<key_end_val; i++)
+	{
+		__set_bit(i, aura_input_dev->keybit);
+	}
+	
+	__set_bit(EV_KEY, aura_input_dev->evbit);
+	__set_bit(EV_REP, aura_input_dev->evbit);
+	
+	aura_input_dev->name = "irkey button";
+	if(input_register_device(aura_input_dev))
+	{
+	    irprint(IRNOR, "auralic regist input dev failed!\n");
+	}
+
+    #if IRKEY_INTERRUPT_KEYS
+	if(0 != request_irq(gpio_to_irq(IR_PIN1),
+       rotary_interrupt_handler1, IRQF_TRIGGER_RISING|IRQF_TRIGGER_FALLING, "irkey1", NULL))
+    {
+        irprint(IRNOR, "auralic irkey1 request interrupt failed!\n");
+        return ; 
+    } 
+    
+	if(0 != request_irq(gpio_to_irq(IR_PIN2), 
+       rotary_interrupt_handler2, IRQF_TRIGGER_RISING|IRQF_TRIGGER_FALLING, "irkey2", NULL))
+    {
+        irprint(IRNOR, "auralic irkey2 request interrupt failed!\n");
+        return ;
+    }
+    
+	if(0 != request_irq(gpio_to_irq(IR_PIN3), 
+       rotary_interrupt_handler3, IRQF_TRIGGER_RISING|IRQF_TRIGGER_FALLING, "irkey3", NULL))
+    {
+        irprint(IRNOR, "auralic irkey3 request interrupt failed!\n");
+        return ;
+    }
+    
+	if(0 != request_irq(gpio_to_irq(IR_PIN4), 
+       rotary_interrupt_handler4, IRQF_TRIGGER_RISING|IRQF_TRIGGER_FALLING, "irkey4", NULL))
+    {
+        irprint(IRNOR, "auralic irkey4 request interrupt failed!\n");
+        return ;
+    }
+    
+/*    
+	if(0 != request_irq(gpio_to_irq(IR_PIN5), 
+       rotary_interrupt_handler5, IRQF_TRIGGER_RISING|IRQF_TRIGGER_FALLING, "irkey5", NULL))
+    {
+        irprint(IRNOR, "auralic irkey5 request interrupt failed!\n");
+        return ;
+    }
+  */  
+    #else
+	if(0 != gpio_request(IR_PIN1,  "irkey1"))
+    {
+        irprint(IRNOR, "auralic irkey1 gpio request failed!\n");
+        return ;
+    }
+    gpio_direction_input(IR_PIN1);
+    
+	if(0 != gpio_request(IR_PIN2,  "irkey2"))
+    {
+        irprint(IRNOR, "auralic irkey2 gpio request failed!\n");
+        return ;
+    }
+    gpio_direction_input(IR_PIN2);
+    
+	if(0 != gpio_request(IR_PIN3,  "irkey3"))
+    {
+        irprint(IRNOR, "auralic irkey3 gpio request failed!\n");
+        return ;
+    }
+    gpio_direction_input(IR_PIN3);
+    
+	if(0 != gpio_request(IR_PIN4,  "irkey4"))
+    {
+        irprint(IRNOR, "auralic irkey4 gpio request failed!\n");
+        return ;
+    }
+    gpio_direction_input(IR_PIN4);
+    /*
+	if(0 != gpio_request(IR_PIN5,  "irkey5"))
+    {
+        irprint(IRNOR, "auralic irkey5 gpio request failed!\n");
+        return ;
+    }
+    gpio_direction_input(IR_PIN5);
+    */
+	irkey_poll_task = kthread_run(irkey_polling_task_fn, NULL, "irkey_polling_task_fn");
+    #endif
+    
+	if(0 != gpio_request(PLUG_FROM_LLINK_DOWN_PIN,  "plug_from_llink_down"))
+    {
+        irprint(IRNOR, "auralic plug_from_llink_down gpio request failed!\n");
+        return ;
+    }
+
+    gpio_direction_input(PLUG_FROM_LLINK_DOWN_PIN);
+
+   /* 
+	if(0 != gpio_request(READY_TO_LLINK_DOWN_PIN,  "ready_llink_down"))
+    {
+        irprint(IRNOR, "auralic ready_llink_down gpio request failed!\n");
+        return ;
+    }
+*/
+    gpio_direction_output(READY_TO_LLINK_DOWN_PIN, 1);
+    
+	init_waitqueue_head(&linkwq);
+	
+}
+
+int irkey_report_task_fn(void *data)
+{	
+	irkey_event_t last_key, new_key;
+	
+    irprint(IRNOR, "auralic start irkey_report_task_fn\n");
+	
+    new_key.key = 0;
+	last_key.key = 0;
+	new_key.jiffies = 0;
+	last_key.jiffies = 0;
+	
+    while(!kthread_should_stop())
+    {
+        schedule_timeout_interruptible(HZ/50);
+		
+		if(0 != irkey_event_key.key)
+		{
+			new_key = irkey_event_key;
+			irkey_event_key.key = 0;
+		}
+
+		if(0 == last_key.key && 0 != new_key.key)
+		{
+			last_key = new_key;
+			last_key.state = NEW;
+			new_key.key = 0;
+		}
+		
+		if(0 != last_key.key)
+		{			
+			switch(last_key.state)
+			{
+				case NEW:
+				if(time_after_eq(jiffies, last_key.jiffies + msecs_to_jiffies(irkey_report_delay_ms)))
+				{
+					last_key.state = PRESS;
+					input_report_key(aura_input_dev, last_key.key, 1);//press
+					input_sync(aura_input_dev);
+				    irprint(IRDBG, "report press key=%d\n", last_key.key);
+				}	
+				break;
+				
+				case PRESS:
+				if(0 != new_key.key)
+				{
+					/* one new key is pressed */
+					if(last_key.key != new_key.key)
+					{	
+						/* a new key is pressed */
+						last_key.state = RELEASE;
+						input_report_key(aura_input_dev, last_key.key, 0);//release
+						input_sync(aura_input_dev);
+						last_key = new_key;
+						last_key.state = NEW;
+						new_key.key = 0;
+					    irprint(IRDBG, "report releae as a new is comming key=%d\n", last_key.key);
+					}
+					else
+					{
+						/* 
+						   it is the same key, if more than HZ/5 the key is not pressed, 
+						   so report release 
+					    */
+						if(time_after_eq(jiffies, new_key.jiffies + msecs_to_jiffies(irkey_report_delay_ms)))
+						{
+							input_report_key(aura_input_dev, last_key.key, 0);//release
+							input_sync(aura_input_dev);
+						    irprint(IRDBG, "report releae as continue timeout key=%d\n", last_key.key);
+							last_key.key = 0;
+							new_key.key = 0;
+						}
+					}
+				}
+				else
+				{
+					/* 
+					   no new key is pressed 
+					   if more than HZ/5 report release 
+				    */
+					if(time_after_eq(jiffies, last_key.jiffies + msecs_to_jiffies(irkey_report_delay_ms)))
+					{
+						input_report_key(aura_input_dev, last_key.key, 0);//release
+						input_sync(aura_input_dev);
+					    irprint(IRDBG, "report releae as timeout key=%d\n", last_key.key);
+						last_key.key = 0;
+					}
+				}
+				break;
+			}
+		}
+    }
+    
+    set_current_state(TASK_RUNNING);
+	
+    irprint(IRNOR, "auralic leave irkey_report_task_fn\n");
+    
+    return 0;
+}
+
+
+static int __init ir_init(void)
+{	
+    //irprint(IRNOR, "loadinging auralic irkey module!\n");
+	printk(KERN_ERR "loading irkey driver...\n");
+	ir_alloc_and_dispatch_mem();
+	ir_init_extra_keys();
+
+    
+	init_waitqueue_head(&irwq);
+	
+    if(NULL == proc_create(IR_PROC_NAME, 0755, NULL, &irproc_op))
+    {
+		irprint(IRNOR, "auralic irkey create /proc/%s failed\n", IR_PROC_NAME);
+        return -1;
+    }
+    
+
+	if(0 != request_irq(gpio_to_irq(IR_PIN), 
+       ir_recv_interrupt_handler, IRQF_TRIGGER_RISING|IRQF_TRIGGER_FALLING, "irkey", NULL))
+    {
+        irprint(IRNOR, "auralic irkey request interrupt failed!\n");
+        return -ENOMEM;
+    }
+    
+/*	
+	epbase = ioremap(EPPHYADDR, EPPHYLEN);
+	if(NULL == epbase)
+	{
+        irprint(IRNOR, "auralic irkey ioremap for epic timer failed!\n");
+        return -ENOMEM;
+	}
+	irbase = (unsigned *)epbase;
+	
+	ir_init_timer();
+	*/
+    kt = ktime_set(0, ir_fm_time_ms*1000000);//ms to ns 
+	hrtimer_init(&irtimer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
+	irtimer.function = irtimer_timeout_handle;
+	hrtimer_start(&irtimer, kt, HRTIMER_MODE_REL);
+
+    
+	ir_register_char_dev();
+
+	irkey_event_key.key = 0;
+	irkeyreport_task = kthread_run(irkey_report_task_fn, NULL, "irkey_report_task");
+	
+    aura_input_init(IR_KEYS_START_VAL, IR_KEYS_END_VALUE);
+	
+	return 0;
+}
+
+static void __exit ir_exit(void)
+{	
+    irprint(IRNOR, "unloadinging auralic irkey module!\n");
+	
+	hrtimer_cancel(&irtimer);
+	ir_stop_timer();
+	//iounmap(epbase);
+	free_irq(gpio_to_irq(IR_PIN), NULL);
+    gpio_free(IR_PIN);
+	remove_proc_entry(IR_PROC_NAME, NULL);
+	ir_free_kcache_mem();
+	ir_unregister_char_dev();
+
+    if(NULL != irkeyreport_task)
+    {
+        kthread_stop(irkeyreport_task);        
+        wake_up_process(irkeyreport_task);
+        irkeyreport_task = NULL;
+    }
+
+    #if IRKEY_INTERRUPT_KEYS    
+	free_irq(gpio_to_irq(IR_PIN1), NULL);
+	free_irq(gpio_to_irq(IR_PIN2), NULL);
+	free_irq(gpio_to_irq(IR_PIN3), NULL);
+	free_irq(gpio_to_irq(IR_PIN4), NULL);
+	//free_irq(gpio_to_irq(IR_PIN5), NULL);
+    #else   
+    if(NULL != irkey_poll_task)
+    {
+        kthread_stop(irkey_poll_task);        
+        wake_up_process(irkey_poll_task);
+        irkey_poll_task = NULL;
+    }
+	gpio_free(IR_PIN1);
+	gpio_free(IR_PIN2);
+	gpio_free(IR_PIN3);
+	gpio_free(IR_PIN4);
+    #endif
+	//free_irq(gpio_to_irq(PLUG_FROM_LLINK_DOWN_PIN), NULL);
+    gpio_free(PLUG_FROM_LLINK_DOWN_PIN);
+    gpio_free(READY_TO_LLINK_DOWN_PIN);    
+
+	input_unregister_device(aura_input_dev);
+	input_free_device(aura_input_dev);
+}
+
+module_init(ir_init);
+module_exit(ir_exit);
+
+MODULE_LICENSE("GPL");
+MODULE_AUTHOR("hu yongfa 2016-12-15");
+MODULE_DESCRIPTION("ir driver for auralic");

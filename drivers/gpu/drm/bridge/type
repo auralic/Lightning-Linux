@@ -1,0 +1,237 @@
+cdns-dsi.c:	if (!drm_core_check_feature(bridge->dev, DRIVER_ATOMIC)) {
+cdns-dsi.c:	return drm_bridge_attach(bridge->encoder, output->bridge, bridge,
+cdns-dsi.c:	mode = &bridge->encoder->crtc->state->adjusted_mode;
+chipone-icn6211.c:	return &bridge->encoder->crtc->state->adjusted_mode;
+chipone-icn6211.c:	return drm_bridge_attach(bridge->encoder, icn->panel_bridge, bridge, flags);
+chrontel-ch7033.c:	ret = drm_bridge_attach(bridge->encoder, priv->next_bridge, bridge,
+chrontel-ch7033.c:	if (priv->next_bridge->ops & DRM_BRIDGE_OP_DETECT) {
+chrontel-ch7033.c:	if (priv->next_bridge->ops & DRM_BRIDGE_OP_HPD) {
+chrontel-ch7033.c:	ret = drm_connector_init_with_ddc(bridge->dev, &priv->connector,
+chrontel-ch7033.c:					  priv->next_bridge->type,
+chrontel-ch7033.c:					  priv->next_bridge->ddc);
+chrontel-ch7033.c:	return drm_connector_attach_encoder(&priv->connector, bridge->encoder);
+chrontel-ch7033.c:	if (priv->next_bridge->ops & DRM_BRIDGE_OP_HPD)
+display-connector.c:	if (!prev_bridge || !prev_bridge->funcs->atomic_get_output_bus_fmts) {
+display-connector.c:	return prev_bridge->funcs->atomic_get_output_bus_fmts(prev_bridge, prev_bridge_state,
+display-connector.c:	if (!prev_bridge || !prev_bridge->funcs->atomic_get_input_bus_fmts) {
+display-connector.c:	return prev_bridge->funcs->atomic_get_input_bus_fmts(prev_bridge, prev_bridge_state,
+fsl-imx-ldb.c:	if (!bridge->encoder) {
+fsl-imx-ldb.c:	return drm_bridge_attach(bridge->encoder,
+it6161.c:	if (!bridge->encoder) {
+it6161.c:	ret = drm_connector_init(bridge->dev, &it6161->connector,
+it6161.c:	drm_connector_attach_encoder(&it6161->connector, bridge->encoder);
+it6263.c:	struct drm_device *drm = bridge->dev;
+it6263.c:	drm_connector_attach_encoder(&it6263->connector, bridge->encoder);
+ite-it66121.c:	ret = drm_bridge_attach(bridge->encoder, ctx->next_bridge, bridge, flags);
+ite-it66121.c:	ctx->connector = drm_atomic_get_new_connector_for_encoder(state, bridge->encoder);
+lontium-lt8912b.c:	ret = drm_connector_init(bridge->dev, connector,
+lontium-lt8912b.c:	drm_connector_attach_encoder(connector, bridge->encoder);
+lontium-lt9211.c:	return drm_bridge_attach(bridge->encoder, ctx->panel_bridge,
+lontium-lt9211.c:							     bridge->encoder);
+lontium-lt9211.c.bak:	return drm_bridge_attach(bridge->encoder, ctx->panel_bridge,
+lontium-lt9211.c.bak:							     bridge->encoder);
+lontium-lt9611.c:	ret = drm_connector_init(bridge->dev, &lt9611->connector,
+lontium-lt9611.c:	if (!bridge->encoder) {
+lontium-lt9611.c:	drm_connector_attach_encoder(&lt9611->connector, bridge->encoder);
+lontium-lt9611uxc.c:	if (!bridge->encoder) {
+lontium-lt9611uxc.c:	ret = drm_connector_init(bridge->dev, &lt9611uxc->connector,
+lontium-lt9611uxc.c:	return drm_connector_attach_encoder(&lt9611uxc->connector, bridge->encoder);
+lvds-codec.c:	return drm_bridge_attach(bridge->encoder, lvds_codec->panel_bridge,
+megachips-stdpxxxx-ge-b850v3-fw.c:	if (!bridge->encoder) {
+megachips-stdpxxxx-ge-b850v3-fw.c:	ret = drm_connector_init(bridge->dev, connector,
+megachips-stdpxxxx-ge-b850v3-fw.c:	return drm_connector_attach_encoder(connector, bridge->encoder);
+nwl-dsi.c:	if (of_device_is_compatible(dsi->panel_bridge->of_node,
+nwl-dsi.c:	    of_device_is_compatible(dsi->panel_bridge->of_node,
+nwl-dsi.c:	if (dsi->panel_bridge->funcs->post_disable)
+nwl-dsi.c:		dsi->panel_bridge->funcs->post_disable(dsi->panel_bridge);
+nwl-dsi.c:	return drm_bridge_attach(bridge->encoder, dsi->panel_bridge, bridge,
+nxp-ptn3460.c:	ret = i2c_master_send(ptn_bridge->client, &addr, 1);
+nxp-ptn3460.c:	ret = i2c_master_recv(ptn_bridge->client, buf, len);
+nxp-ptn3460.c:	ret = i2c_master_send(ptn_bridge->client, buf, ARRAY_SIZE(buf));
+nxp-ptn3460.c:			ptn_bridge->edid_emulation);
+nxp-ptn3460.c:		ptn_bridge->edid_emulation << PTN3460_EDID_EMULATION_SELECTION;
+nxp-ptn3460.c:	if (ptn_bridge->enabled)
+nxp-ptn3460.c:	gpiod_set_value(ptn_bridge->gpio_pd_n, 1);
+nxp-ptn3460.c:	gpiod_set_value(ptn_bridge->gpio_rst_n, 0);
+nxp-ptn3460.c:	gpiod_set_value(ptn_bridge->gpio_rst_n, 1);
+nxp-ptn3460.c:	ptn_bridge->enabled = true;
+nxp-ptn3460.c:	if (!ptn_bridge->enabled)
+nxp-ptn3460.c:	ptn_bridge->enabled = false;
+nxp-ptn3460.c:	gpiod_set_value(ptn_bridge->gpio_rst_n, 1);
+nxp-ptn3460.c:	gpiod_set_value(ptn_bridge->gpio_pd_n, 0);
+nxp-ptn3460.c:	power_off = !ptn_bridge->enabled;
+nxp-ptn3460.c:	ptn3460_pre_enable(&ptn_bridge->bridge);
+nxp-ptn3460.c:		ptn3460_disable(&ptn_bridge->bridge);
+nxp-ptn3460.c:	edid = ptn3460_get_edid(&ptn_bridge->bridge, connector);
+nxp-ptn3460.c:	ret = drm_bridge_attach(bridge->encoder, ptn_bridge->panel_bridge,
+nxp-ptn3460.c:	if (!bridge->encoder) {
+nxp-ptn3460.c:	ptn_bridge->connector.polled = DRM_CONNECTOR_POLL_HPD;
+nxp-ptn3460.c:	ret = drm_connector_init(bridge->dev, &ptn_bridge->connector,
+nxp-ptn3460.c:	drm_connector_helper_add(&ptn_bridge->connector,
+nxp-ptn3460.c:	drm_connector_register(&ptn_bridge->connector);
+nxp-ptn3460.c:	drm_connector_attach_encoder(&ptn_bridge->connector,
+nxp-ptn3460.c:							bridge->encoder);
+nxp-ptn3460.c:	drm_helper_hpd_irq_event(ptn_bridge->connector.dev);
+nxp-ptn3460.c:	ptn_bridge->panel_bridge = panel_bridge;
+nxp-ptn3460.c:	ptn_bridge->client = client;
+nxp-ptn3460.c:	ptn_bridge->gpio_pd_n = devm_gpiod_get(&client->dev, "powerdown",
+nxp-ptn3460.c:	if (IS_ERR(ptn_bridge->gpio_pd_n)) {
+nxp-ptn3460.c:		ret = PTR_ERR(ptn_bridge->gpio_pd_n);
+nxp-ptn3460.c:	ptn_bridge->gpio_rst_n = devm_gpiod_get(&client->dev, "reset",
+nxp-ptn3460.c:	if (IS_ERR(ptn_bridge->gpio_rst_n)) {
+nxp-ptn3460.c:		ret = PTR_ERR(ptn_bridge->gpio_rst_n);
+nxp-ptn3460.c:			&ptn_bridge->edid_emulation);
+nxp-ptn3460.c:	ptn_bridge->bridge.funcs = &ptn3460_bridge_funcs;
+nxp-ptn3460.c:	ptn_bridge->bridge.ops = DRM_BRIDGE_OP_EDID;
+nxp-ptn3460.c:	ptn_bridge->bridge.type = DRM_MODE_CONNECTOR_LVDS;
+nxp-ptn3460.c:	ptn_bridge->bridge.of_node = dev->of_node;
+nxp-ptn3460.c:	drm_bridge_add(&ptn_bridge->bridge);
+nxp-ptn3460.c:	drm_bridge_remove(&ptn_bridge->bridge);
+nxp-seiko-43wvfig.c:	struct seiko_adapter *adap = bridge->driver_private;
+nxp-seiko-43wvfig.c:	struct drm_encoder *encoder = bridge->encoder;
+nxp-seiko-43wvfig.c:	struct seiko_adapter *adap = bridge->driver_private;
+nxp-seiko-43wvfig.c:	struct seiko_adapter *adap = bridge->driver_private;
+nxp-seiko-43wvfig.c:	struct seiko_adapter *adap = bridge->driver_private;
+nxp-seiko-43wvfig.c:	struct seiko_adapter *adap = bridge->driver_private;
+panel.c:	return drm_panel_get_modes(panel_bridge->panel, connector);
+panel.c:	struct drm_connector *connector = &panel_bridge->connector;
+panel.c:	if (!bridge->encoder) {
+panel.c:	ret = drm_connector_init(bridge->dev, connector,
+panel.c:				 panel_bridge->connector_type);
+panel.c:	drm_connector_attach_encoder(&panel_bridge->connector,
+panel.c:					  bridge->encoder);
+panel.c:	struct drm_connector *connector = &panel_bridge->connector;
+panel.c:	drm_panel_prepare(panel_bridge->panel);
+panel.c:	drm_panel_enable(panel_bridge->panel);
+panel.c:	drm_panel_disable(panel_bridge->panel);
+panel.c:	drm_panel_unprepare(panel_bridge->panel);
+panel.c:	return drm_panel_get_modes(panel_bridge->panel, connector);
+panel.c:	panel_bridge->connector_type = connector_type;
+panel.c:	panel_bridge->panel = panel;
+panel.c:	panel_bridge->bridge.funcs = &panel_bridge_bridge_funcs;
+panel.c:	panel_bridge->bridge.of_node = panel->dev->of_node;
+panel.c:	panel_bridge->bridge.ops = DRM_BRIDGE_OP_MODES;
+panel.c:	panel_bridge->bridge.type = connector_type;
+panel.c:	drm_bridge_add(&panel_bridge->bridge);
+panel.c:	return &panel_bridge->bridge;
+panel.c:	if (bridge->funcs != &panel_bridge_bridge_funcs)
+panel.c:	devm_kfree(panel_bridge->panel->dev, bridge);
+panel.c:	return &panel_bridge->connector;
+parade-ps8640.c:	struct i2c_client *client = ps_bridge->page[PAGE3_DSI_CNTL1];
+parade-ps8640.c:	struct i2c_client *client = ps_bridge->page[PAGE2_TOP_CNTL];
+parade-ps8640.c:	if (ps_bridge->powered)
+parade-ps8640.c:	ret = regulator_bulk_enable(ARRAY_SIZE(ps_bridge->supplies),
+parade-ps8640.c:				    ps_bridge->supplies);
+parade-ps8640.c:	gpiod_set_value(ps_bridge->gpio_powerdown, 0);
+parade-ps8640.c:	gpiod_set_value(ps_bridge->gpio_reset, 1);
+parade-ps8640.c:	gpiod_set_value(ps_bridge->gpio_reset, 0);
+parade-ps8640.c:	ps_bridge->powered = true;
+parade-ps8640.c:	regulator_bulk_disable(ARRAY_SIZE(ps_bridge->supplies),
+parade-ps8640.c:			       ps_bridge->supplies);
+parade-ps8640.c:	if (!ps_bridge->powered)
+parade-ps8640.c:	gpiod_set_value(ps_bridge->gpio_reset, 1);
+parade-ps8640.c:	gpiod_set_value(ps_bridge->gpio_powerdown, 1);
+parade-ps8640.c:	ret = regulator_bulk_disable(ARRAY_SIZE(ps_bridge->supplies),
+parade-ps8640.c:				     ps_bridge->supplies);
+parade-ps8640.c:	ps_bridge->powered = false;
+parade-ps8640.c:	struct device *dev = &ps_bridge->page[0]->dev;
+parade-ps8640.c:	ps_bridge->dsi = dsi;
+parade-ps8640.c:	return drm_bridge_attach(bridge->encoder, ps_bridge->panel_bridge,
+parade-ps8640.c:				 &ps_bridge->bridge, flags);
+parade-ps8640.c:	bool poweroff = !ps_bridge->powered;
+parade-ps8640.c:			    ps_bridge->page[PAGE0_DP_CNTL]->adapter);
+parade-ps8640.c:	ps_bridge->panel_bridge = devm_drm_panel_bridge_add(dev, panel);
+parade-ps8640.c:	if (IS_ERR(ps_bridge->panel_bridge))
+parade-ps8640.c:		return PTR_ERR(ps_bridge->panel_bridge);
+parade-ps8640.c:	ps_bridge->supplies[0].supply = "vdd12";
+parade-ps8640.c:	ps_bridge->supplies[1].supply = "vdd33";
+parade-ps8640.c:	ret = devm_regulator_bulk_get(dev, ARRAY_SIZE(ps_bridge->supplies),
+parade-ps8640.c:				      ps_bridge->supplies);
+parade-ps8640.c:	ps_bridge->gpio_powerdown = devm_gpiod_get(&client->dev, "powerdown",
+parade-ps8640.c:	if (IS_ERR(ps_bridge->gpio_powerdown))
+parade-ps8640.c:		return PTR_ERR(ps_bridge->gpio_powerdown);
+parade-ps8640.c:	ps_bridge->gpio_reset = devm_gpiod_get(&client->dev, "reset",
+parade-ps8640.c:	if (IS_ERR(ps_bridge->gpio_reset))
+parade-ps8640.c:		return PTR_ERR(ps_bridge->gpio_reset);
+parade-ps8640.c:	ps_bridge->bridge.funcs = &ps8640_bridge_funcs;
+parade-ps8640.c:	ps_bridge->bridge.of_node = dev->of_node;
+parade-ps8640.c:	ps_bridge->bridge.ops = DRM_BRIDGE_OP_EDID;
+parade-ps8640.c:	ps_bridge->bridge.type = DRM_MODE_CONNECTOR_eDP;
+parade-ps8640.c:	ps_bridge->page[PAGE0_DP_CNTL] = client;
+parade-ps8640.c:	for (i = 1; i < ARRAY_SIZE(ps_bridge->page); i++) {
+parade-ps8640.c:		ps_bridge->page[i] = devm_i2c_new_dummy_device(&client->dev,
+parade-ps8640.c:		if (IS_ERR(ps_bridge->page[i])) {
+parade-ps8640.c:			return PTR_ERR(ps_bridge->page[i]);
+parade-ps8640.c:	drm_bridge_add(&ps_bridge->bridge);
+parade-ps8640.c:	drm_bridge_remove(&ps_bridge->bridge);
+sec-dsim.c:	struct sec_mipi_dsim *dsim = bridge->driver_private;
+sec-dsim.c:	struct sec_mipi_dsim *dsim = bridge->driver_private;
+sec-dsim.c:	struct sec_mipi_dsim *dsim = bridge->driver_private;
+sec-dsim.c:	struct sec_mipi_dsim *dsim = bridge->driver_private;
+sec-dsim.c:	struct sec_mipi_dsim *dsim = bridge->driver_private;
+sec-dsim.c:	struct sec_mipi_dsim *dsim = bridge->driver_private;
+sec-dsim.c:	bridge->driver_private = dsim;
+sec-dsim.c:	bridge->funcs = &sec_mipi_dsim_bridge_funcs;
+sec-dsim.c:	bridge->of_node = dev->of_node;
+sec-dsim.c:	bridge->encoder = encoder;
+sii902x.c:	struct drm_device *drm = bridge->dev;
+sii902x.c:	drm_connector_attach_encoder(&sii902x->connector, bridge->encoder);
+simple-bridge.c:	if (sbridge->next_bridge->ops & DRM_BRIDGE_OP_EDID) {
+simple-bridge.c:		edid = drm_bridge_get_edid(sbridge->next_bridge, connector);
+simple-bridge.c:	return drm_bridge_detect(sbridge->next_bridge);
+simple-bridge.c:	ret = drm_bridge_attach(bridge->encoder, sbridge->next_bridge, bridge,
+simple-bridge.c:	if (!bridge->encoder) {
+simple-bridge.c:	drm_connector_helper_add(&sbridge->connector,
+simple-bridge.c:	ret = drm_connector_init_with_ddc(bridge->dev, &sbridge->connector,
+simple-bridge.c:					  sbridge->info->connector_type,
+simple-bridge.c:					  sbridge->next_bridge->ddc);
+simple-bridge.c:	drm_connector_attach_encoder(&sbridge->connector, bridge->encoder);
+simple-bridge.c:	if (sbridge->vdd) {
+simple-bridge.c:		ret = regulator_enable(sbridge->vdd);
+simple-bridge.c:	gpiod_set_value_cansleep(sbridge->enable, 1);
+simple-bridge.c:	gpiod_set_value_cansleep(sbridge->enable, 0);
+simple-bridge.c:	if (sbridge->vdd)
+simple-bridge.c:		regulator_disable(sbridge->vdd);
+simple-bridge.c:	sbridge->info = of_device_get_match_data(&pdev->dev);
+simple-bridge.c:	sbridge->next_bridge = of_drm_find_bridge(remote);
+simple-bridge.c:	if (!sbridge->next_bridge) {
+simple-bridge.c:	sbridge->vdd = devm_regulator_get_optional(&pdev->dev, "vdd");
+simple-bridge.c:	if (IS_ERR(sbridge->vdd)) {
+simple-bridge.c:		int ret = PTR_ERR(sbridge->vdd);
+simple-bridge.c:		sbridge->vdd = NULL;
+simple-bridge.c:	sbridge->enable = devm_gpiod_get_optional(&pdev->dev, "enable",
+simple-bridge.c:	if (IS_ERR(sbridge->enable)) {
+simple-bridge.c:		if (PTR_ERR(sbridge->enable) != -EPROBE_DEFER)
+simple-bridge.c:		return PTR_ERR(sbridge->enable);
+simple-bridge.c:	sbridge->bridge.funcs = &simple_bridge_bridge_funcs;
+simple-bridge.c:	sbridge->bridge.of_node = pdev->dev.of_node;
+simple-bridge.c:	sbridge->bridge.timings = sbridge->info->timings;
+simple-bridge.c:	drm_bridge_add(&sbridge->bridge);
+simple-bridge.c:	drm_bridge_remove(&sbridge->bridge);
+tc358762.c:	return drm_bridge_attach(bridge->encoder, ctx->panel_bridge,
+tc358764.c:	struct drm_device *drm = bridge->dev;
+tc358764.c:	drm_connector_attach_encoder(&ctx->connector, bridge->encoder);
+tc358767.c:	struct drm_device *drm = bridge->dev;
+tc358768.c:	if (!drm_core_check_feature(bridge->dev, DRIVER_ATOMIC)) {
+tc358768.c:	return drm_bridge_attach(bridge->encoder, priv->output.bridge, bridge,
+tc358768.c:	mode = &bridge->encoder->crtc->state->adjusted_mode;
+tc358775.c:	struct drm_connector *connector = get_connector(bridge->encoder);
+tc358775.c:	mode = &bridge->encoder->crtc->state->adjusted_mode;
+tc358775.c:	return drm_bridge_attach(bridge->encoder, tc->panel_bridge,
+thc63lvd1024.c:	return drm_bridge_attach(bridge->encoder, thc63->next, bridge, flags);
+ti-sn65dsi83.c:	return drm_bridge_attach(bridge->encoder, ctx->panel_bridge,
+ti-sn65dsi83.c:							     bridge->encoder);
+ti-sn65dsi86.c:	pdata->aux.drm_dev = bridge->dev;
+ti-sn65dsi86.c:		drm_err(bridge->dev, "Failed to register DP AUX channel: %d\n", ret);
+ti-sn65dsi86.c:	ret = drm_bridge_attach(bridge->encoder, pdata->next_bridge,
+ti-tfp410.c:	if (dvi->next_bridge->ops & DRM_BRIDGE_OP_EDID) {
+ti-tfp410.c:	ret = drm_bridge_attach(bridge->encoder, dvi->next_bridge, bridge,
+ti-tfp410.c:	if (!bridge->encoder) {
+ti-tfp410.c:	if (dvi->next_bridge->ops & DRM_BRIDGE_OP_DETECT)
+ti-tfp410.c:	if (dvi->next_bridge->ops & DRM_BRIDGE_OP_HPD) {
+ti-tfp410.c:	ret = drm_connector_init_with_ddc(bridge->dev, &dvi->connector,
+ti-tfp410.c:					  dvi->next_bridge->type,
+ti-tfp410.c:					  dvi->next_bridge->ddc);
+ti-tfp410.c:	drm_connector_attach_encoder(&dvi->connector, bridge->encoder);
+ti-tfp410.c:	if (dvi->connector.dev && dvi->next_bridge->ops & DRM_BRIDGE_OP_HPD) {
+ti-tpd12s015.c:	ret = drm_bridge_attach(bridge->encoder, tpd->next_bridge,

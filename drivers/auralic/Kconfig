@@ -1,0 +1,197 @@
+
+menuconfig AURALIC_DRIVERS 
+	bool "AURALiC drivers support"
+
+if AURALIC_DRIVERS 
+
+
+
+#########################################################################	 
+##   menu for auralic aries-g2 drivers                                     ##
+######################################################################### 
+
+menuconfig AURALIC_ARIES_G2
+    bool "AURALiC Aries gen2 Drivers"
+    
+if AURALIC_ARIES_G2
+
+#config AURALIC_BUTTONS 
+#	tristate "Buttons Support for AURALiC"
+#    select KEYBOARD_GPIO
+#	help
+#	  This option enables support for the Buttons of AURALIC.	  
+config AURALIC_ES9028PRO
+	tristate "auralic es9028 driver"
+	help
+        No comment
+
+config AURALIC_LCD 
+	tristate "enable lcd driver for AURALiC"
+	help
+	  This option enables lcd driver for AURALIC.	  
+
+config AURALIC_CONTROL 
+	tristate "enable gpio control driver for AURALiC"
+	help
+	  This option enables tart/stop & diskname binding for AURALIC.	  
+config AURALIC_I2C 
+	tristate "enable i2c driver for AURALiC"
+	help
+	  This option enables tart/stop & diskname binding for AURALIC.	  
+config AURALIC_SYS 
+	tristate "enable sys interface for AURALiC"
+	help
+	  This option enables tart/stop & diskname binding for AURALIC.	  
+
+config AURALIC_DISK_NAME_BIND 
+	tristate "start/stop & diskname binding Support for AURALiC"
+	help
+	  This option enables tart/stop & diskname binding for AURALIC.	  
+
+config AURALIC_ETH_RESET 
+	tristate "add eth0 reset pin Support for AURALiC"
+	help
+	  This option add eth0 reset pin Support for AURALiC.	  
+
+config AURALIC_USB_BEST_CONFIG 
+	tristate "forcely take config0 as USB best config for AURALiC"
+	help
+	  This option enables support for the Buttons of AURALIC.	  
+
+config STATIC_MMCBLK_IDX 
+	tristate "use static mmcblk index for mmc block dev for AURALiC"
+	help
+	  This option enables support for the Buttons of AURALIC.	  
+
+
+config AURALIC_FILELIST 
+	tristate "use filelist module to record all file's change time"
+	help
+	  This option enables support for recording all file's change time.
+	  
+config AURALIC_PANIC
+	tristate "support syslog save when kernel panic"
+	help
+	  This option enables support for syslog save when kernel panic.
+	  
+config AURALIC_GPIO
+	tristate "support control gpios of usb hub reset pin and hdd enable pin"
+	help
+	  This option enables support for control gpios's value of hub reset and hdd enable.
+	  
+config AURALIC_SOUND_CARD_ID_BIND
+	tristate "auralic bind id 0 for ARIES/ARIES MINI/ALTAIR/POLARIS/ARIES G2 sound card"
+	help
+        No comment
+
+config AURALIC_AUTO_REBOOT_FOR_GPU
+	tristate "kernel init will hang while use gpu and ramdisk at the same time"
+	help
+        No comment
+
+config AURALIC_IRKEY
+	tristate "IRM driver for aries g2"
+	help
+        No comment
+	
+endif # end of menuconfig AURALIC_ARIES_G2
+
+
+
+
+#########################################################################	 
+##   menu for auralic vega-g2 drivers                                     ##
+######################################################################### 
+
+menuconfig AURALIC_VEGA_G2
+    bool "AURALiC VEGA gen2 Drivers"
+    
+if AURALIC_VEGA_G2
+
+#config AURALIC_BUTTONS 
+#	tristate "Buttons Support for AURALiC"
+#    select KEYBOARD_GPIO
+#	help
+#	  This option enables support for the Buttons of AURALIC.	  
+
+
+config AURALIC_DISK_NAME_BIND 
+	tristate "start/stop & diskname binding Support for AURALiC"
+	help
+	  This option enables tart/stop & diskname binding for AURALIC.	  
+
+config AURALIC_ETH_RESET 
+	tristate "add eth0 reset pin Support for AURALiC"
+	help
+	  This option add eth0 reset pin Support for AURALiC.	  
+
+config AURALIC_USB_BEST_CONFIG 
+	tristate "forcely take config0 as USB best config for AURALiC"
+	help
+	  This option enables support for the Buttons of AURALIC.	  
+
+config STATIC_MMCBLK_IDX 
+	tristate "use static mmcblk index for mmc block dev for AURALiC"
+	help
+	  This option enables support for the Buttons of AURALIC.	  
+
+#config HFSPLUS_JOURNAL_CHECK 
+#	tristate "check journal consistant but not repare for AURALiC"
+#	help
+#	  This option enables support for the Buttons of AURALIC.	  
+
+config AURALIC_FILELIST 
+	tristate "use filelist module to record all file's change time"
+	help
+	  This option enables support for recording all file's change time.
+	  
+config AURALIC_PANIC
+	tristate "support syslog save when kernel panic"
+	help
+	  This option enables support for syslog save when kernel panic.
+	  
+config AURALIC_GPIO
+	tristate "support control gpios of usb hub reset pin and hdd enable pin"
+	help
+	  This option enables support for control gpios's value of hub reset and hdd enable.
+	  
+config AURALIC_SOUND_CARD_ID_BIND
+	tristate "auralic bind id 0 for ARIES/ARIES MINI/ALTAIR/POLARIS/ARIES G2/VEGA G2 sound card"
+	help
+        No comment
+
+config AURALIC_AUTO_REBOOT_FOR_GPU
+	tristate "kernel init will hang while use gpu and ramdisk at the same time"
+	help
+        No comment
+
+config AURALIC_IRKEY
+	tristate "IRM driver for vega g2"
+	help
+        No comment
+
+config AURALIC_VEGA2_CONTROL
+	tristate "vega2 control driver"
+	help
+        No comment
+
+config AURALIC_VEGA2_ES9028
+	tristate "vega2 es9028 driver"
+	help
+        No comment
+
+config AURALIC_VEGA2_I2C
+	tristate "vega i2c driver for"
+	help
+        No comment
+
+config AURALIC_VEGA2_SYS
+	tristate "vega2 sys driver"
+	help
+        No comment
+
+	
+endif # end of menuconfig AURALIC_VEGA_G2
+
+
+endif # end of AURALIC_DRIVERS 

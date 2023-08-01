@@ -1,0 +1,646 @@
+// SPDX-License-Identifier: GPL-2.0-or-later OR MIT
+/*
+ * Copyright 2022 Toradex
+ */
+
+/ {
+	reg_wifi_en: regulator-wifi-en {
+		compatible = "regulator-fixed";
+		enable-active-high;
+		gpio = <&gpio2 11 GPIO_ACTIVE_HIGH>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&pinctrl_wifi_pwr_en>;
+		regulator-max-microvolt = <3300000>;
+		regulator-min-microvolt = <3300000>;
+		regulator-name = "PDn_AW-CM276NF";
+		startup-delay-us = <2000>;
+	};
+	reg_eth2phy: regulator-eth2phy {
+		compatible = "regulator-fixed";
+		enable-active-high;
+		gpio = <&gpio_expander_21 4 GPIO_ACTIVE_HIGH>; /* ETH_PWR_EN */
+		off-on-delay = <500000>;
+		regulator-max-microvolt = <3300000>;
+		regulator-min-microvolt = <3300000>;
+		regulator-name = "+V3.3_ETH";
+		startup-delay-us = <200000>;
+		vin-supply = <&reg_3p3v>;
+	};
+	outcodec: sound-wwan-codec {
+		compatible = "linux,snd-soc-dummy";
+		status = "disabled";
+		#sound-dai-cells = <0>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&pinctrl_sai1>;
+	};
+	codec1: codec1 {
+		compatible = "linux,snd-soc-dummy";
+		status = "okay";
+	    #sound-dai-cells = <0>;
+		//sound-name-prefix = "1";
+	};
+	llink_output_codec: llink_output_codec {
+		compatible = "fsl,auralic-llink_output";
+		status = "okay";
+	    #sound-dai-cells = <0>;
+	    //pinctrl-names = "default";
+	    //pinctrl-0 = <&pinctrl_sai1>;
+	};
+	codec2: codec2 {
+		compatible = "linux,snd-soc-dummy";
+		status = "disabled";
+	    #sound-dai-cells = <0>;
+	    pinctrl-names = "default";
+	    pinctrl-0 = <&pinctrl_sai2>;
+	};
+	codec5: codec5 {
+		compatible = "linux,snd-soc-dummy";
+		status = "okay";
+		#sound-dai-cells = <0>;
+	};
+	xmos_usbin_codec: xmos_usbin_codec {
+		compatible = "fsl,auralic-xmos-usbin";
+		status = "okay";
+	    #sound-dai-cells = <0>;
+	};
+	codec6: codec6 {
+		compatible = "linux,snd-soc-dummy";
+		status = "okay";
+		#sound-dai-cells = <0>;
+	};
+	dix9211_dir_codec: dix9211_dir_codec {
+		compatible = "fsl,auralic-dix9211-dir";
+		status = "okay";
+	    #sound-dai-cells = <0>;
+	};
+
+	sound-sai1 {
+		compatible = "fsl,imx-audio-card";
+		model = "imx-sound-sai1";
+        auralic_sound_card_index = <0>;
+		
+        llink-dai-link {
+			link-name = "Lightning Link Output";
+            format = "pdm";
+			cpu {
+				sound-dai = <&sai1>;
+			};
+			codec {
+				sound-dai = <&llink_output_codec>;
+			};
+		};
+        
+		dit-dai-link {
+			link-name = "Digital Output";
+            format = "i2s";
+			cpu {
+				sound-dai = <&sai1>;
+			};
+			codec {
+				sound-dai = <&cs8406_17>;
+			};
+		};
+        
+	};
+	sound-sai2 {
+		compatible = "fsl,imx-audio-card";
+		model = "imx-sound-sai2";
+        auralic_sound_card_index = <1>;
+		pri-dai-link {
+			link-name = "PDM PCM";
+			format = "pdm";
+			cpu {
+				sound-dai = <&sai2>;
+			};
+			codec {
+				sound-dai = <&codec2>;
+			};
+		};
+	};
+	sound-sai5 {
+		compatible = "fsl,imx-audio-card";
+		model = "imx-sound-sai5";
+        auralic_sound_card_index = <3>;
+		pri-dai-link {
+			link-name = "PDM PCM";
+			format = "pdm";
+			cpu {
+				sound-dai = <&sai5>;
+			};
+			codec {
+			    sound-dai = <&xmos_usbin_codec>;
+            };
+		};
+	};
+	sound-sai6 {
+		compatible = "fsl,imx-audio-card";
+		model = "imx-sound-sai6";
+        auralic_sound_card_index = <2>;
+		pri-dai-link {
+			link-name = "PDM PCM";
+			format = "pdm";
+			cpu {
+				sound-dai = <&sai6>;
+			};
+			codec {
+                sound-dai = <&dix9211_dir_codec>;
+			};
+		};
+	};
+#if 1
+	sound-xcvr {
+		compatible = "fsl,imx-audio-card";
+		model = "imx-audio-xcvr";
+        auralic_sound_card_index = <4>;
+		pri-dai-link {
+			link-name = "XCVR PCM";
+			cpu {
+				sound-dai = <&xcvr>;
+			};
+		};
+	};
+#endif
+};
+&gpio5 {
+	gpio-line-names = "SODIMM_42",
+			  "SODIMM_46",
+			  "SODIMM_187",
+			  "SODIMM_20",
+			  "SODIMM_22",
+			  "SODIMM_15",
+			  "SODIMM_196",
+			  "SODIMM_200",
+			  "SODIMM_198",
+			  "SODIMM_202",
+			  "",
+			  "",
+			  "",
+			  "",
+			  "",
+			  "",
+			  "SODIMM_55",
+			  "SODIMM_53",
+			  "SODIMM_95",
+			  "SODIMM_93",
+			  "SODIMM_14",
+			  "SODIMM_12",
+			  "SODIMM_129",
+			  "SODIMM_131",
+			  "SODIMM_137",
+			  "SODIMM_139",
+			  "SODIMM_147",
+			  "SODIMM_149",
+			  "SODIMM_151",
+			  "SODIMM_153";
+};
+#if 0
+&iomuxc {
+	pinctrl-names = "default";
+	pinctrl-0 = <&pinctrl_gpio1>, <&pinctrl_gpio2>,
+		    <&pinctrl_gpio3>, <&pinctrl_gpio4>,
+		    <&pinctrl_gpio7>, <&pinctrl_gpio8>,
+		    <&pinctrl_gpio_hog3>, <&pinctrl_gpio_hog4>,
+		    <&pinctrl_hdmi_hog>;
+};
+#endif
+&iomuxc {
+	pinctrl-names = "default";
+	pinctrl-0 = <&pinctrl_gpio1>,
+		    <&pinctrl_gpio3>, <&pinctrl_gpio4>,
+		    <&pinctrl_gpio7>, <&pinctrl_gpio8>,
+		    <&pinctrl_hdmi_hog>, <&pinctrl_auralic_hog>;
+};
+#if 1
+&xcvr {
+    //pinctrl-names = "default";
+    //pinctrl-0 = <&pinctrl_xcvr>;
+    #sound-dai-cells = <0>;
+    status = "okay";
+};
+#endif
+/* On-module Bluetooth */
+&uart4 {
+	uart-has-rtscts;
+	pinctrl-names = "default";
+	pinctrl-0 = <&pinctrl_bt_uart>;
+	status = "okay";
+
+	bluetooth {
+		compatible = "mrvl,88w8997";
+		max-speed = <921600>;
+	};
+};
+
+/* On-module Wi-Fi */
+&usdhc1 {
+	bus-width = <4>;
+	fsl,sdio-async-interrupt-enabled;
+	keep-power-in-suspend;
+	non-removable;
+	pinctrl-names = "default", "state_100mhz", "state_200mhz";
+	pinctrl-0 = <&pinctrl_usdhc1>, <&pinctrl_wifi_ctrl>;
+	pinctrl-1 = <&pinctrl_usdhc1_100mhz>, <&pinctrl_wifi_ctrl>;
+	pinctrl-2 = <&pinctrl_usdhc1_200mhz>, <&pinctrl_wifi_ctrl>;
+	vmmc-supply = <&reg_wifi_en>;
+	status = "okay";
+};
+&backlight {
+	power-supply = <&reg_3p3v>;
+    status = "okay";
+};
+&backlight_led {
+	power-supply = <&reg_3p3v>;
+    status = "okay";
+};
+/* Verdin SPI_1 */
+#if 1
+&ecspi1 {
+	status = "okay";
+};
+#endif
+/* EEPROM on display adapter boards */
+&eeprom_display_adapter {
+	status = "disabled";
+};
+
+/* EEPROM on Verdin Development board */
+&eeprom_carrier_board {
+	status = "disabled";
+};
+
+&eqos {
+	status = "okay";
+};
+
+&fec {
+	phy-supply = <&reg_eth2phy>;
+	status = "disabled";
+};
+
+&flexcan1 {
+	status = "disabled";
+};
+//因为和verdin的uart冲突，暂时禁用
+&flexcan2 {
+	status = "okay";
+};
+
+/* Verdin QSPI_1 */
+&flexspi {
+	status = "disabled";
+};
+
+&gpio_expander_21 {
+	status = "disabled";
+	vcc-supply = <&reg_1p8v>;
+};
+
+/* Current measurement into module VCC */
+&hwmon {
+	status = "disabled";
+};
+
+&hwmon_temp {
+	vs-supply = <&reg_1p8v>;
+	status = "disabled";
+};
+
+&i2c1 {
+	//status = "disabled";
+    status = "okay";
+};
+/* Verdin I2C_2_DSI */
+&i2c3 {
+	status = "okay";
+   /* 
+dix9211_40:codec-9211@40 {
+		compatible = "fsl,auralic-dix9211";
+		#sound-dai-cells = <0>;
+               reg = <0x40>;
+		vcc-supply = <&reg_3p3v>;
+               status = "okay";
+           };
+*/
+    /*
+xmos_50:codec-xmos@50 {
+		compatible = "fsl,auralic-xmos";
+		#sound-dai-cells = <0>;
+               reg = <0x50>;
+		vcc-supply = <&reg_3p3v>;
+               status = "okay";
+           };
+      */     
+};
+
+/* Verdin I2C_1 */
+&i2c4 {
+	status = "okay";
+
+	/* Audio Codec */
+   /* 
+	nau8822_1a: codec-nau@1a {
+		compatible = "nuvoton,nau8822";
+		//pinctrl-names = "default";
+		//pinctrl-0 = <&pinctrl_sai1>;
+		//#sound-dai-cells = <0>;
+		reg = <0x1a>;
+    };
+    */
+    
+    es9028pro_48:es9029pro@48 {
+		compatible = "fsl,es9028";
+        reg = <0x48>;
+		vcc-supply = <&reg_3p3v>;
+        status = "okay";
+    };
+    
+    cs8406_17:codec-8406@17 {
+		compatible = "fsl,auralic-cs8406";
+		#sound-dai-cells = <0>;
+		//sound-name-prefix = "0";
+        reg = <0x17>;
+		vcc-supply = <&reg_3p3v>;
+		//pinctrl-names = "default";
+		//pinctrl-0 = <&pinctrl_sai1>;
+        //reset-gpio = <&gpio3 0 GPIO_ACTIVE_HIGH>;
+        //mclk-gpio = <&gpio3 1 GPIO_ACTIVE_HIGH>;
+        status = "okay";
+    };
+};
+
+/* Verdin PCIE_1 */
+&pcie {
+	epdev_on-supply = <&reg_3p3v>;
+	status = "okay";
+};
+
+&pcie_phy {
+	status = "okay";
+};
+
+/* Verdin PWM_1  for auralic lcd */
+&pwm1 {
+	status = "okay";
+};
+
+/* Verdin PWM_2 */
+&pwm2 {
+	status = "disabled";
+};
+
+/* Verdin PWM_3_DSI */
+&pwm3 {
+	status = "okay";
+};
+
+&reg_usdhc2_vmmc {
+	vin-supply = <&reg_3p3v>;
+};
+
+/* VERDIN I2S_1 */
+/*slave ,data out ,done*/
+&sai1 {
+	dmas = <&sdma2 0 25 0>, <&sdma2 1 25 0>;
+	#sound-dai-cells = <0>;
+	pinctrl-names = "default";
+	pinctrl-0 = <&pinctrl_sai1>;
+    assigned-clocks = <&clk IMX8MP_CLK_SAI1>;
+	assigned-clock-parents = <&clk IMX8MP_AUDIO_PLL1_OUT>;
+	assigned-clock-rates = <49152000>;
+	clocks = <&audio_blk_ctrl IMX8MP_CLK_AUDIO_BLK_CTRL_SAI1_IPG>, <&clk IMX8MP_CLK_DUMMY>,
+		<&audio_blk_ctrl IMX8MP_CLK_AUDIO_BLK_CTRL_SAI1_MCLK1>, <&clk IMX8MP_CLK_DUMMY>,
+		<&clk IMX8MP_CLK_DUMMY>, <&clk IMX8MP_AUDIO_PLL1_OUT>,
+		<&clk IMX8MP_AUDIO_PLL2_OUT>;
+	clock-names = "bus", "mclk0", "mclk1", "mclk2", "mclk3", "pll8k", "pll11k";
+    fsl,sai-asynchronous;
+	fsl,sai-mclk-direction-output;
+    //fsl,txmasterflag = <1>; //1:slave bclk and slave sync;4:master bclk and master sync;3: slave bclk,master sync,这里不指定，则由codec指定,如果指定了，再从codec指定无效，sai driver会判断
+    fsl,sai-multi-lane;
+	fsl,dataline,dsd = <0 0xff 0xff>;
+    status = "okay";
+};
+/* VERDIN I2S_2 */
+/*slave ,data out ,done*/
+&sai2 {
+	dmas = <&sdma2 2 25 0>, <&sdma2 3 25 0>;
+	#sound-dai-cells = <0>;
+    assigned-clocks = <&clk IMX8MP_CLK_SAI2>;
+	assigned-clock-parents = <&clk IMX8MP_AUDIO_PLL1_OUT>;
+	assigned-clock-rates = <49152000>;
+    clocks = <&audio_blk_ctrl IMX8MP_CLK_AUDIO_BLK_CTRL_SAI2_IPG>, <&clk IMX8MP_CLK_DUMMY>,
+		<&audio_blk_ctrl IMX8MP_CLK_AUDIO_BLK_CTRL_SAI2_MCLK1>, <&clk IMX8MP_CLK_DUMMY>,
+		<&clk IMX8MP_CLK_DUMMY>, <&clk IMX8MP_AUDIO_PLL1_OUT>,
+		<&clk IMX8MP_AUDIO_PLL2_OUT>;
+	clock-names = "bus", "mclk0", "mclk1", "mclk2", "mclk3", "pll8k", "pll11k";
+    fsl,sai-asynchronous;//slave模式指定这行其实没有效果，默认就是异步模式
+    fsl,sai-mclk-direction-output;
+    fsl,txmasterflag = <1>; //1:slave bclk and slave sync;4:master bclk and master sync;3: slave bclk,master sync
+    //fsl,txmasterflag = <4>; //展会的临时设置
+    fsl,sai-multi-lane;
+	fsl,dataline,dsd = <0 0xff 0xff>;
+    status = "okay";
+};
+/* VERDIN I2S_3 */
+/*master mode,MCLK input,data in*/
+&sai5 {
+	dmas = <&sdma2 8 25 0>, <&sdma2 9 25 0>;
+	#sound-dai-cells = <0>;
+	pinctrl-names = "default";
+	pinctrl-0 = <&pinctrl_sai5>;
+    assigned-clocks = <&clk IMX8MP_CLK_SAI5>,<&audio_blk_ctrl IMX8MP_CLK_AUDIO_BLK_CTRL_SAI5_MCLK1_SEL>;//<&sai5_mclk 0>;
+	assigned-clock-parents = <&clk IMX8MP_AUDIO_PLL1_OUT>,<&sai5_mclk 0>;
+	assigned-clock-rates = <49152000>;
+    
+	clocks = <&audio_blk_ctrl IMX8MP_CLK_AUDIO_BLK_CTRL_SAI5_IPG>, <&clk IMX8MP_CLK_DUMMY>,
+		<&audio_blk_ctrl IMX8MP_CLK_AUDIO_BLK_CTRL_SAI5_MCLK1>, <&clk IMX8MP_CLK_DUMMY>,
+		<&clk IMX8MP_CLK_DUMMY>, <&clk IMX8MP_AUDIO_PLL1_OUT>,
+		<&clk IMX8MP_AUDIO_PLL2_OUT>;
+	clock-names = "bus", "mclk0", "mclk1", "mclk2", "mclk3", "pll8k", "pll11k";
+    fsl,sai-asynchronous; //不能删除
+	fsl,sai-mclk-direction-input;
+    fsl,rxmasterflag = <4>; //1:slave bclk and slave sync;4:master bclk and master sync
+    fsl,sai-multi-lane;
+	fsl,dataline,dsd = <0 0x3 0xff>;
+    status = "okay";
+};
+/*slave mode,data in, done*/
+&sai6 {
+	//dmas = <&sdma2 10 25 0>, <&sdma2 11 25 0>;//不能有这行内核会崩溃
+	#sound-dai-cells = <0>;
+	pinctrl-names = "default";
+	pinctrl-0 = <&pinctrl_sai6>;
+	assigned-clocks = <&clk IMX8MP_CLK_SAI6>;//,<&audio_blk_ctrl IMX8MP_CLK_AUDIO_BLK_CTRL_SAI6_MCLK1_SEL>;
+	assigned-clock-parents = <&clk IMX8MP_AUDIO_PLL1_OUT>;//,<&sai6_mclk 0>;
+	assigned-clock-rates = <49152000>;//<24576000>;
+	clocks = <&audio_blk_ctrl IMX8MP_CLK_AUDIO_BLK_CTRL_SAI6_IPG>, <&clk IMX8MP_CLK_DUMMY>,
+		<&audio_blk_ctrl IMX8MP_CLK_AUDIO_BLK_CTRL_SAI6_MCLK1>, <&clk IMX8MP_CLK_DUMMY>,
+		<&clk IMX8MP_CLK_DUMMY>, <&clk IMX8MP_AUDIO_PLL1_OUT>,
+		<&clk IMX8MP_AUDIO_PLL2_OUT>;
+	clock-names = "bus", "mclk0", "mclk1", "mclk2", "mclk3", "pll8k", "pll11k";
+	fsl,sai-asynchronous;
+    fsl,sai-mclk-direction-output;
+    fsl,rxmasterflag = <1>; //1:slave bclk and slave sync;4:master bclk and master sync
+    status = "okay";
+};
+
+&sdma2 {
+	status = "okay";
+};
+
+/* Verdin UART_1, connector X50 through RS485 transceiver */
+&uart1 {
+    linux,rs485-enabled-at-boot-time;
+	rs485-rts-active-low;
+	rs485-rx-during-tx;
+	status = "okay";
+};
+
+/* Verdin UART_2 */
+&uart2 {
+	status = "disabled";
+};
+
+/* Verdin UART_3, used as the Linux Console */
+&uart3 {
+	status = "disabled";//启用can需要禁用uart3
+};
+
+/* Verdin USB_1 */
+&usb3_0 {
+	status = "okay";
+};
+
+&usb3_phy0 {
+	status = "okay";
+};
+&usb_dwc3_0 {
+    status = "okay";
+};
+/* Verdin USB_2 */
+&usb3_1 {
+	fsl,permanently-attached;
+	status = "okay";
+};
+
+&usb3_phy1 {
+	status = "okay";
+};
+
+/* Limit frequency on dev board due to long traces and bad signal integrity */
+&usdhc2 {
+	max-frequency = <100000000>;
+	status = "okay";
+};
+#if 1
+&ecspi1 {
+    fsl,spi-num-chipselects = <1>;
+	status = "okay";
+    spidev@0 {
+		/* Use compatible "rohm,dh2228fv" to bind spidev driver */
+		compatible = "rohm,dh2228fv";
+		reg = <0>;
+		spi-max-frequency = <10000000>;
+    };
+#if 0
+    lcd_panel: display@0 {
+                  compatible = "ili,ili9806g";
+                  status = "okay";
+                  spi-max-frequency = <1000000>;
+                  reg = <0>;
+                  port {
+                      ttl_in: endpoint {
+                          remote-endpoint = <&lt9211_out>;
+                      };
+                  };
+              };
+#endif
+};
+#endif
+&i2c2 {
+	status = "okay";
+panel_rgb:bridge@2d {
+      compatible = "ili,ili9806g";
+	  reset-gpios = <&gpio5 25 GPIO_ACTIVE_HIGH>;
+	  interrupts-extended = <&gpio2 7 IRQ_TYPE_EDGE_FALLING>;
+      vccio-supply = <&reg_vdd_1v8>;
+      reg = <0x2d>;
+      status = "okay";
+      width-mm = <52>;
+      height-mm = <86>;
+      data-mapping = "vesa-24";
+      //rotation = <270>;
+	panel-timing {
+		clock-frequency = <26730000>;
+		de-active = <1>;
+        vsync-active = <1>;
+        hsync-active = <1>;
+		hactive = <480>;
+		hback-porch = <30>;
+		hfront-porch = <30>;
+		hsync-len = <10>;
+		pixelclk-active = <0>; /*? positive edge */
+		vactive = <800>;
+		vback-porch = <15>;
+		vfront-porch = <8>;
+		vsync-len = <2>;
+	};
+      port {
+        panel_in_rgb: endpoint {
+          //remote-endpoint = <&lt9211_out>;
+          remote-endpoint = <&lvds_out>;
+        };
+      };
+    };
+};
+&ldb {
+    status = "okay";
+	lvds_channel0: lvds-channel@0 {
+        /*Bus format is MEDIA_BUS_FMT_RGB888_1X7X4_SPWG*/
+		fsl,data-mapping = "spwg";
+		fsl,data-width = <24>;
+		status = "okay";
+        /delete-node/ port@1;
+		port@1 {
+			reg = <1>;
+
+			lvds_out: endpoint {
+				//remote-endpoint = <&lt9211_in>;
+				remote-endpoint = <&panel_in_rgb>;
+            };
+		};
+	};
+};
+&ldb_phy {
+	status = "okay";
+};
+
+//&lvds_lt9211 {
+//    status = "okay";
+//};
+&lcdif2 {
+	status = "okay";
+};
+#if 1
+&lcdif3 {
+	status = "okay";
+};
+&hdmi {
+	status = "okay";
+};
+
+&hdmiphy {
+	status = "okay";
+};
+
+&hdmi_blk_ctrl {
+	status = "okay";
+};
+
+&hdmi_pavi {
+	status = "okay";
+};
+
+&irqsteer_hdmi {
+	status = "okay";
+};
+#endif
