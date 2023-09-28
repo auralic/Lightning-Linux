@@ -293,6 +293,7 @@ struct fsl_sai {
 	bool monitor_spdif;
 	bool monitor_spdif_start;
     bool is_mclk_input;
+    bool swap_dsd;
 
 	int gpr_idx;
 	int pcm_dl_cfg_cnt;

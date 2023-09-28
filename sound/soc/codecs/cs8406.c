@@ -187,7 +187,7 @@ static struct snd_soc_dai_driver cs8406_dai = {
 	.playback = {
 		.stream_name = "Playback",
 		.channels_min = 2,
-		.channels_max = 8,
+		.channels_max = 2,
 		.rates = CS8406_PCM_RATES,
 		.formats = CS8406_PCM_FORMATS,
 	},

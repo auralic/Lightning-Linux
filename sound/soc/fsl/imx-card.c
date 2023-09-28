@@ -368,7 +368,7 @@ static int imx_aif_hw_params(struct snd_pcm_substream *substream,
                     case 705600:
                     case 768000:
                         {
-                            fmt |= SND_SOC_DAIFMT_IB_NF;
+                            fmt |= SND_SOC_DAIFMT_IB_IF;
                             fmt |= SND_SOC_DAIFMT_LEFT_J;
 
                         }
@@ -384,7 +384,7 @@ static int imx_aif_hw_params(struct snd_pcm_substream *substream,
                     case 352800:
                     case 384000:
                         {
-                    fmt |= SND_SOC_DAIFMT_IB_NF;
+                    fmt |= SND_SOC_DAIFMT_IB_IF;
                     fmt |= SND_SOC_DAIFMT_LEFT_J;
                         }
                         break;
@@ -419,14 +419,14 @@ static int imx_aif_hw_params(struct snd_pcm_substream *substream,
                     case 176400:
                     case 192000:
                         {
-                    fmt |= SND_SOC_DAIFMT_IB_NF;
+                    fmt |= SND_SOC_DAIFMT_IB_IF;
                     fmt |= SND_SOC_DAIFMT_LEFT_J;
                         }
                         break;
                     case 352800:
                     case 384000:
                         {
-                    fmt |= SND_SOC_DAIFMT_NB_NF;
+                    fmt |= SND_SOC_DAIFMT_NB_IF;
                     fmt |= SND_SOC_DAIFMT_LEFT_J;
                         }
                         break;

@@ -207,7 +207,7 @@ static struct snd_soc_dai_driver es9028_dai = {
 	.playback = {
 		.stream_name = "Playback",
 		.channels_min = 2,
-		.channels_max = 8,
+		.channels_max = 2,
 		.rates = ES9028_RATES,
 		.formats = ES9028_FORMATS,
 	},

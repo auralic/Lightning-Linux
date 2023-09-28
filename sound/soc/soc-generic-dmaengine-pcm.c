@@ -312,7 +312,7 @@ static int dmaengine_copy_user(struct snd_soc_component *component,
 	void *dma_ptr = runtime->dma_area + hwoff +
 			channel * (runtime->dma_bytes / runtime->channels);
 
-	if (is_playback)
+    if (is_playback)
 		if (copy_from_user(dma_ptr, buf, bytes))
 			return -EFAULT;
 

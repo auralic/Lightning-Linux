@@ -397,6 +397,7 @@ xmos_50:codec-xmos@50 {
     //fsl,txmasterflag = <1>; //1:slave bclk and slave sync;4:master bclk and master sync;3: slave bclk,master sync,这里不指定，则由codec指定,如果指定了，再从codec指定无效，sai driver会判断
     fsl,sai-multi-lane;
 	fsl,dataline,dsd = <0 0xff 0xff>;
+    fsl,swap-dsd; //dsd左右声道反转
     status = "okay";
 };
 /* VERDIN I2S_2 */
@@ -418,6 +419,7 @@ xmos_50:codec-xmos@50 {
     //fsl,txmasterflag = <4>; //展会的临时设置
     fsl,sai-multi-lane;
 	fsl,dataline,dsd = <0 0xff 0xff>;
+    fsl,swap-dsd; //dsd左右声道反转
     status = "okay";
 };
 /* VERDIN I2S_3 */
@@ -441,6 +443,7 @@ xmos_50:codec-xmos@50 {
     fsl,rxmasterflag = <4>; //1:slave bclk and slave sync;4:master bclk and master sync
     fsl,sai-multi-lane;
 	fsl,dataline,dsd = <0 0x3 0xff>;
+    fsl,swap-dsd; //dsd左右声道反转
     status = "okay";
 };
 /*slave mode,data in, done*/

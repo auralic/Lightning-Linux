@@ -189,7 +189,7 @@ static struct snd_soc_dai_driver xmos_usbin_dai = {
 	.capture = {
 		.stream_name = "Capture",
 		.channels_min = 2,
-		.channels_max = 8,
+		.channels_max = 2,
 		.rates = XMOS_USBIN_RATES,
 		.formats = XMOS_USBIN_FORMATS,
 	},

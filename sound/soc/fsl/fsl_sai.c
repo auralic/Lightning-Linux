@@ -1335,6 +1335,74 @@ static int fsl_sai_read_dlcfg(struct platform_device *pdev, char *pn,
 	return num_cfg;
 }
 
+static int fsl_sai_pcm_process(struct snd_pcm_substream *substream,
+				       int channel, unsigned long hwoff,
+				       void *buf, unsigned long bytes)
+{
+	struct snd_pcm_runtime *runtime = substream->runtime;
+    if(runtime->format == SNDRV_PCM_FORMAT_DSD_U32_BE)
+    {
+        struct snd_soc_pcm_runtime *rtd = asoc_substream_to_rtd(substream);
+        struct snd_soc_dai *codec_dai;
+        int i;
+        bool need_swap = true;
+
+        for_each_rtd_codec_dais(rtd, i, codec_dai) {
+            if(!strncmp(codec_dai->name,"xmos_usbin",strlen("xmos_usbin")))
+            {
+                need_swap = false;
+                break;
+            }
+
+        }
+
+        //printk(KERN_ERR "process pcm==%d===%ld==%ld===%ld==%ld\n",channel,hwoff,bytes,bytes_to_samples(runtime,bytes),bytes_to_frames(runtime,bytes));
+        if(need_swap)
+        {
+            int64_t *ptr = (int64_t *)(runtime->dma_area + hwoff +
+                    channel * (runtime->dma_bytes / runtime->channels));
+            ssize_t cnt = bytes_to_frames(runtime, bytes);
+            do {
+                *ptr = ((*ptr & 0x00000000ffffffff)<<32) | ((*ptr & 0xffffffff00000000) >> 32);
+                ptr++;
+            } while(--cnt);
+        }
+    }
+#if 0
+    int32_t *ptr = (int32_t *)(runtime->dma_area + hwoff +
+			   channel * (runtime->dma_bytes / runtime->channels));
+	ssize_t cnt = bytes_to_frames(runtime, bytes);
+    do {
+        int32_t buf1 = *ptr;
+        int32_t buf2 = *(ptr+1);
+        //*ptr = ((buf1 & 0x00000000ffffffff)<<32) | (buf2 >> 32);
+        *ptr = buf2;
+        *(ptr+1) = buf1;
+        ptr++;
+        ptr++;
+    } while(--cnt);
+#endif
+	return 0;
+}
+
+
+
+static bool filter(struct dma_chan *chan, void *param)
+{
+	if (!imx_dma_is_general_purpose(chan))
+		return false;
+
+	chan->private = param;
+
+	return true;
+}
+
+
+static const struct snd_dmaengine_pcm_config imx_dmaengine_pcm_config = {
+	.prepare_slave_config = snd_dmaengine_pcm_prepare_slave_config,
+	.compat_filter_fn = filter,
+	.process = fsl_sai_pcm_process,
+};
 static int fsl_sai_probe(struct platform_device *pdev)
 {
 	struct device_node *np = pdev->dev.of_node;
@@ -1535,7 +1603,12 @@ static int fsl_sai_probe(struct platform_device *pdev)
         sai->is_mclk_input = true;
 	}
 
-	ret = pm_runtime_put_sync(&pdev->dev);
+    sai->swap_dsd = false;
+	if (of_find_property(np, "fsl,swap-dsd", NULL)) {
+        sai->swap_dsd = true;
+	}
+	
+    ret = pm_runtime_put_sync(&pdev->dev);
 	if (ret < 0)
 		goto err_pm_get_sync;
 
@@ -1566,8 +1639,27 @@ static int fsl_sai_probe(struct platform_device *pdev)
 	 * is not defer probe for platform component in snd_soc_add_pcm_runtime().
 	 */
 	if (sai->soc_data->use_imx_pcm) {
-		ret = imx_pcm_dma_init(pdev, IMX_SAI_DMABUF_SIZE);
-		if (ret)
+        if(sai->swap_dsd)
+        {
+            struct snd_dmaengine_pcm_config *config;
+
+            config = devm_kzalloc(&pdev->dev,
+                    sizeof(struct snd_dmaengine_pcm_config), GFP_KERNEL);
+            if (!config)
+                return -ENOMEM;
+            *config = imx_dmaengine_pcm_config;
+
+            config->prealloc_buffer_size = IMX_SAI_DMABUF_SIZE;
+
+            ret = devm_snd_dmaengine_pcm_register(&pdev->dev,
+                    config,
+                    SND_DMAENGINE_PCM_FLAG_COMPAT);
+        }
+        else
+        {
+		    ret = imx_pcm_dma_init(pdev, IMX_SAI_DMABUF_SIZE);
+        }
+        if (ret)
 			goto err_component_register;
 	} else {
 		ret = devm_snd_dmaengine_pcm_register(&pdev->dev, NULL, 0);

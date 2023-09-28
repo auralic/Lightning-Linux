@@ -180,7 +180,7 @@ static struct snd_soc_dai_driver dix9211_dir_dai = {
 	.capture = {
 		.stream_name = "Capture",
 		.channels_min = 2,
-		.channels_max = 8,
+		.channels_max = 2,
 		.rates = DIX9211_PCM_RATES,
 		.formats = DIX9211_PCM_FORMATS,
 	},

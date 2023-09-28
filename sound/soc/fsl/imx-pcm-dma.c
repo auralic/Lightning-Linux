@@ -29,6 +29,7 @@ static bool filter(struct dma_chan *chan, void *param)
 	return true;
 }
 
+
 static const struct snd_dmaengine_pcm_config imx_dmaengine_pcm_config = {
 	.prepare_slave_config = snd_dmaengine_pcm_prepare_slave_config,
 	.compat_filter_fn = filter,

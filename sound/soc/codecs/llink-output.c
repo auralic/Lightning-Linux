@@ -184,7 +184,7 @@ static struct snd_soc_dai_driver llink_output_dai = {
 	.playback = {
 		.stream_name = "Playback",
 		.channels_min = 2,
-		.channels_max = 8,
+		.channels_max = 2,
 		.rates = LLINK_OUTPUT_RATES,
 		.formats = LLINK_OUTPUT_FORMATS,
 	},

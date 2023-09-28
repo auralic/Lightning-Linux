@@ -152,7 +152,7 @@ struct aura_write_info *aura_get_one_info(void)
             aura_info[i].iswrite = false;
             atomic_inc(&info_count);
             //debug
-            printk(KERN_DEBUG"aura_get_one_info info=0x%08x\n", (unsigned int)&aura_info[i]);
+            //printk(KERN_DEBUG"aura_get_one_info info=0x%08x\n", (unsigned int)&aura_info[i]);
             return &aura_info[i];
         }
     }
@@ -216,7 +216,7 @@ void aura_put_one_info(struct aura_write_info * info)
     raw_spin_unlock_irqrestore(&info_lock, flags);
     
     //debug
-    printk(KERN_DEBUG"aura_put_one_info info=0x%08x\n", (unsigned int)info);
+    //printk(KERN_DEBUG"aura_put_one_info info=0x%08x\n", (unsigned int)info);
     atomic_dec(&info_count);
 }
 
@@ -306,7 +306,7 @@ void aura_info_timeout_handle(struct timer_list *t)
     if(NULL != filelist_task)
         wake_up_process(filelist_task);
     //debug
-    printk(KERN_DEBUG"aura_info_timeout_handle info=0x%08x\n", (unsigned int)info);
+    //printk(KERN_DEBUG"aura_info_timeout_handle info=0x%08x\n", (unsigned int)info);
 }
 
 void aura_start_one_info(struct aura_write_info * info)

@@ -184,7 +184,7 @@ static struct snd_soc_dai_driver llink_input_dai = {
 	.capture = {
 		.stream_name = "Capture",
 		.channels_min = 2,
-		.channels_max = 8,
+		.channels_max = 2,
 		.rates = LLINK_INPUT_RATES,
 		.formats = LLINK_INPUT_FORMATS,
 	},
