@@ -122,6 +122,18 @@ unsigned char vol_get_reduce_output_db(void)
     return reduce_db;
 }
 EXPORT_SYMBOL_GPL(vol_get_reduce_output_db); 
+static int replay_gain_db = 0;
+bool vol_set_replay_gain_db(int db)
+{
+    replay_gain_db = db;
+    return true;
+}
+EXPORT_SYMBOL_GPL(vol_set_replay_gain_db);
+int vol_get_replay_gain_db(void)
+{
+    return replay_gain_db;
+}
+EXPORT_SYMBOL_GPL(vol_get_replay_gain_db); 
 void vol_setting_delay(char delay)
 {
 	vol_delay_ms = delay;
@@ -197,6 +209,28 @@ bool vol_write_lr_db(unsigned char db)
     else db_l = db_l + reduce_db;
     if(db_r + reduce_db > 255) db_r = 255;
     else db_r = db_r + reduce_db;
+    
+    if(replay_gain_db > 0)
+    {
+        if(db_l > replay_gain_db)
+            db_l = db_l-replay_gain_db;
+        else db_l = 0;
+        //if(db_l < 0) db_l = 0;
+        if(db_r > replay_gain_db)
+            db_r = db_r-replay_gain_db;
+        else db_r = 0;
+        //if(db_r < 0) db_r = 0;
+    }
+    else if(replay_gain_db < 0)
+    {
+        if(db_l-replay_gain_db > 255) db_l = 255;
+        else
+            db_l = db_l-replay_gain_db;
+        if(db_r-replay_gain_db > 255) db_r = 255;
+        else
+            db_r = db_r-replay_gain_db;
+        
+    }
 
     print(IRDBG, "balance = %u  db_l = %u   db_r = %u!\n", vol_balance, db_l, db_r);
     

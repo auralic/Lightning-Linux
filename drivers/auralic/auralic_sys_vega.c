@@ -279,6 +279,7 @@ static char *volhelp_str =
 "echo read_r x  >  /proc/vol --> read right channel's reg x\n" \
 "echo delay  x  >  /proc/vol --> set delay = x for writing db\n"
 "echo reduce_output  x  >  /proc/vol --> reduce output level by x db\n"
+"echo replay_gain  x  >  /proc/vol --> set replay gain by x db\n"
 ;
 
 extern char vol_getting_delay(void);
@@ -293,6 +294,8 @@ extern bool vol_write_vol_balance(unsigned char db);
 extern unsigned char vol_get_vol_balance(void);
 extern bool vol_set_reduce_output_db(unsigned char reduce_db);
 extern unsigned char vol_get_reduce_output_db(void);
+extern bool vol_set_replay_gain_db(int replay_gain_db);
+extern int vol_get_replay_gain_db(void);
 ssize_t volproc_read(struct file *filp, char __user *usrbuf, size_t size, loff_t *offset)
 {	 
 	int len = 0;
@@ -304,6 +307,7 @@ ssize_t volproc_read(struct file *filp, char __user *usrbuf, size_t size, loff_t
     len += sprintf(buff+len, "vol = %u\n", last_volume);
     len += sprintf(buff+len, "vol_balance = %u\n", vol_get_vol_balance());
     len += sprintf(buff+len, "reduce_output = %u\n", vol_get_reduce_output_db());
+    len += sprintf(buff+len, "replay_gain = %d\n", vol_get_replay_gain_db());
 
 	*offset = len;
 
@@ -405,6 +409,11 @@ static ssize_t volproc_write(struct file *filp, const char __user *usr_buf,
 	{
 		vol_set_reduce_output_db(reg);
          sysprt(SYSNOR, "reduce output of %d db by proc!\n", reg);
+	}
+	else if(0 == strncmp(cmd, "replay_gain", strlen("replay_gain")) && cnt == 2)
+	{
+		vol_set_replay_gain_db(reg);
+         sysprt(SYSNOR, "set replay gain of %d db by proc!\n", reg);
 	}
 	else if(0 == strncmp(cmd, "read_l", strlen("read_l")) && cnt == 2)
 	{		
